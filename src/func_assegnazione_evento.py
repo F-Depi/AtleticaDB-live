@@ -174,7 +174,6 @@ def check_master(nome):
         return False
 
 
-
 def info_categoria(nome):
     
     ## funzione scritta per inferire la categoria di un evento.
@@ -290,7 +289,6 @@ def info_categoria(nome):
         print('Ho trovato '+str(check)+'categorie diverse. Restituisco la più giovane. Non fidarti di me!')
     
     return cat
-
 
 
 def info_ostacoli(nome):
@@ -448,7 +446,6 @@ def info_ostacoli(nome):
         
     return spec, warn_spec
         
-
 
 def assegna_evento_specifico(nome, eve):
     

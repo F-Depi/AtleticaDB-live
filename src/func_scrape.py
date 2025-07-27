@@ -46,7 +46,6 @@ def luogo_data_batteria(date_str):
     
     # Se non c'è il giorno
     else: return date_str, ''
-        
     
 
 def clean_tempo(tempo):
@@ -249,18 +248,3 @@ def scrape_vecchio_corse(competition_row):
                 batterie = pd.concat([batterie, batteria_N]).reset_index(drop=True)
                 
     return batterie
-
-
-def scrape_nuovo_corse(competition_row):
-    ## Funzione per fare scraping dei risultati delle corse (individuali), degli ostacoli e della marcia nel sito nuovo ('Versione Sigma' = 'Vecchissimo')
-    ## input è una riga di un DataFrame con columns=['Codice','Versione Sigma','Warning','Disciplina','Nome','Link']
-    ## Se la versione del sigma in input non è corretta la funzione stampa un errore e non restituisce nulla
-    ## Se la disciplina non è corretta stampa un errore e restituisce un DataFrame vuoto
-    ## Restituisce una DataFrame con columns=['Disciplina', 'Prestazione', 'Atleta','Anno','Categoria','Società','Data','Luogo','Gara]
-    
-    # Controlliamo la versione del sigma
-    if competition_row['Vesrione Sigma'] == 'Vecchissimo':
-        print("Yes we did it" )
-    
-    return
-

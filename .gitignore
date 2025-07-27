@@ -3,3 +3,4 @@ script/test.py
 .venv/
 venv/
 doc/Appunti.txt
+src/config.py

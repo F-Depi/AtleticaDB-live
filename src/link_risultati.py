@@ -1,84 +1,29 @@
 import pandas as pd
 import os
-from func_general import extract_meet_codes_from_calendar, get_meet_info, get_events_link
+from func_general import update_gare_database, get_meet_info, get_events_link, get_db_engine
 from func_assegnazione_evento import assegna_evento_generale, assegna_evento_specifico
 import time
 start_time = time.time()
 
 
-anno = '2025';      regione = '';       categoria = ''      
-mese = '';          tipo = '5'
-
-folder_link = 'database_link/outdoor_'+anno+'/'
-#folder_link = 'test/'
-file_gare = folder_link + 'link_gare.csv'
-file_risultati = folder_link + 'link_risultati.csv'
-file_dizionario = 'Generale/event_dict.json'
-file_dizionario_new = 'Generale/event_dict_new.csv'
+anno = '2024'
+mese = ''
+regione = ''
+categoria = ''
+""" Cerca nuove fare nel calendario """
+update_gare_database(anno, mese, regione, categoria)
 
 
-################# Codici gare (anno, mese, livello, regione, tipo, categoria) ###################
-## Se file_gare è già presente viene solo aggiornato con i nuovi codici gara
-## la funzione usata restituisce un DataFrame columns=['Data', 'Codice', 'Ultimo Aggiornamento', 'Nome', 'Home Gara']
-print("---------------------------------------------")
+""" Aggiorna le informazioni sulle gare """
+update_condition = 'null' # righe appena aggiunte
+with get_db_engine().connect() as conn:
+    get_meet_info(conn, update_condition)
 
-df_REG_gare = extract_meet_codes_from_calendar(anno,mese,'REG',regione,tipo,categoria)
-df_COD_gare = extract_meet_codes_from_calendar(anno,mese,'COD',regione,tipo,categoria)
-if df_REG_gare is not None and df_COD_gare is not None:
-    df_gare = pd.concat([df_REG_gare, df_COD_gare], ignore_index=True)
-else:
-    print("df_REG_gare o df_COD_gare è None, non posso continuare")
-    exit()
-df_gare[['Home','Risultati','Versione Sigma','Status']] = ''
-df_gare = df_gare[['Data','Codice','Nome','Home Gara','Home','Risultati','Versione Sigma','Status','Ultimo Aggiornamento']]
+update_condition = 'date_7' # routine update
+with get_db_engine().connect() as conn:
+    get_meet_info(conn, update_condition)
 
-# Aggiornamento file
-if not os.path.exists(folder_link): os.makedirs(folder_link)
-
-if os.path.exists(file_gare):
-
-    print(f"E' stato trovato il file {file_gare}")
-
-    df_gare_old = pd.read_csv(file_gare, sep='~')
-    df_gare_old['Data'] = pd.to_datetime(df_gare_old['Data']).dt.date
-    df_gare_old['Ultimo Aggiornamento'] = pd.to_datetime(df_gare_old['Ultimo Aggiornamento']).dt.date
-
-    df_gare_new = df_gare[~df_gare['Codice'].isin(df_gare_old['Codice'])]
-    df_gare = pd.concat([df_gare_old, df_gare_new], ignore_index=True)
-
-    if len(df_gare_new) > 0:
-        print("Sono stati aggiunti i codici gare:\n")
-        for cod in df_gare_new['Codice']: print(cod + '\n')
-
-    else:
-        print("Non sono stati aggiunti codici gare\n")
-
-else:
-    print(f"Non ho trovato il file {file_gare}, lo creo con i {str(len(df_gare))} codici gare trovati.")
-
-## Mettiamo le gare in ordine cronologico
-df_gare = df_gare.sort_values(by='Data')
-df_gare = df_gare.reset_index(drop=True)
-
-#################################################################################################
-
-
-
-################# Link ai risultati (Codici delle gare, Disciplina scelta)   ####################
-## In modalità 'date' aggiorna il DataFrame delle gare controllando se sono disponibili nuovi link nelle gare
-## che hanno |data_gara - data_oggi| < 7 giorni oppure delle gare passate che hanno
-## (data_ultimo_aggiornamento - data_gara) < 7 giorni
-## Il DataFrame deve essere già del tipo:
-## ['Data','Codice','Home','Risultati','Versione Sigma','Status','Ultimo Aggiornamento']
-print("---------------------------------------------")
-update_condition = 'date_0'
-
-df_gare = get_meet_info(df_gare, update_condition)
-if df_gare is not None:
-    df_gare.to_csv(file_gare, sep='~', index=False)
-
-##################################################################################################
-
+exit()
 
 ############## Otteniamo i link a ogni risultato di ogni disciplina per ogni gara ################
 ## usiamo come DataFrame ['Codice', 'Versione Sigma', 'Disciplina', 'Nome', 'Link']
@@ -91,7 +36,7 @@ if df_gare is not None:
 print('\n---------------------------------------------')
 print("Ora cerco i link agli eventi di ogni gara")
 
-update_condition = 'date_0'
+update_condition = 'all'
 
 if os.path.exists(file_risultati):
 
