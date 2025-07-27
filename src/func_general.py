@@ -27,64 +27,82 @@ def get_db_engine():
 
 
 def extract_meet_codes_from_calendar(anno, mese, livello, regione, tipo, categoria) -> pd.DataFrame:
-    ## Scarica informazioni sulle gare presenti nel calendario fidal https://www.fidal.it/calendario.php
-     # Per ogni gara scarica codice gara, data, nome, home page della gara
-     # 'aggiornato' è messo di defaul al 31 marzo 1896, data simbolica per dire che i risultati
-     # non sono stati aggiornati di recente
-     #
-     # Input: fare riferimento a Readme.txt
-     # Output è un DataFramne con columns=['data', 'codice', 'aggiornato', 'nome', 'link_gara']
+    """
+    Scarica informazioni sulle gare presenti nel calendario fidal https://www.fidal.it/calendario.php
+    'aggiornato' è messo di defaul al 31 marzo 1896, data simbolica per dire che i risultati
+    non sono stati aggiornati di recente
+    
+    Input: fare riferimento a Readme.txt
+    Output: df['data_inizio' 'data_fine' 'codice' 'aggiornato' 'nome'
+               'link_gara' 'livello' 'luogo' 'tipologia']
+    """
     
     ## Componiamo il link con i parametri del filtro
     url = 'https://www.fidal.it/calendario.php?anno='+anno+'&mese='+mese+'&livello='+livello+'&new_regione='+regione+'&new_tipo='+tipo+'&new_categoria='+categoria+'&submit=Invia'
     response = requests.get(url)
 
-    if response.status_code == 200:
-        
-        soup = BeautifulSoup(response.text, 'html.parser')
-        div = soup.find('div', class_='table_btm')
-        
-        dates = []
-        meet_code = []
-        nome_gara = []
-        home_gara = []
-        
-        if div:
-            ## Testo con la data del meeting 
-            b_elements = div.find_all('b')
-
-            for b in b_elements:
-
-                if 'title' in b.attrs:
-                    meet_date = b.get_text(strip=True) # il format è 31/12, 30-31/12, 31/12-01/01. Quindi mi basta prendere gli ultimi 5 caratteri
-                    last_day = int(meet_date[-5:-3])
-                    month = int(meet_date[-2:])
-                    dates.append(date(int(anno), month, last_day))
-            
-            ## Link, codice e nome del meeting
-            a_elements = div.find_all('a', href=True)
-
-            for a in a_elements:
-                href = a['href']
-                match = re.search(fr'{livello}(\d+)', href)
-
-                nome_gara.append(a.get_text(strip=True))
-                home_gara.append(href)
-                meet_code.append(match[0])
-                
-            df = pd.DataFrame({'data': dates, 'codice': meet_code, 'aggiornato':date(1896, 3, 31), 'nome': nome_gara, 'link_gara': home_gara}) # first modern olympics date
-            df['tipologia'] = tipologia_dict[tipo]
-            
-            return df
-
-
-        else:
-            print('No tables with class \'table_btm\' found')
-            return pd.DataFrame()
-        
-    else:
+    if response.status_code != 200:
         print("Failed to fetch the webpage. status code:", response.status_code)
         return pd.DataFrame()
+        
+    soup = BeautifulSoup(response.text, 'html.parser')
+    table = soup.find('table', class_='table')
+
+    data_inizio_gara = []
+    data_fine_gara = []
+    cod_gara = []
+    nome_gara = []
+    link_gara = []
+    luogo_gara = []
+    livello_gara = []
+    tipologia_gara = []
+
+    if not table:
+        print("Non ho trovato nulla")
+        return pd.DataFrame()
+
+    ## Testo con la data del meeting 
+    for row in table.find_all('tr'):
+        tds = row.find_all('td')
+        if len(tds) != 6:
+            print("Riga strana: " + url)
+            continue
+
+        meet_date = tds[1].get_text(strip=True)
+        last_day = int(meet_date[-5:-3])
+        last_month = int(meet_date[-2:])
+        data_fine_gara.append(date(int(anno), last_month, last_day))
+        first_day = int(meet_date[:2])
+        if meet_date[2] == '-':
+            first_month = last_month
+        elif meet_date[2] == '/':
+            first_month = int(meet_date[3:5])
+        else:
+            print("data strana", meet_date, url)
+            first_month = last_month
+        data_inizio_gara.append(date(int(anno), first_month, first_day))
+
+        livello_gara.append(tds[2].get_text(strip=True))
+        
+        nome_gara.append(tds[3].get_text(strip=True))
+        link_gara.append(tds[3].find('a')['href'])
+        cod_gara.append(link_gara[-1].split('/')[-1].strip())
+
+        tipologia_gara.append(tds[4].get_text(strip=True).lower())
+
+        luogo_gara.append(tds[5].get_text(strip=True))
+
+    df = pd.DataFrame({'data_inizio': data_inizio_gara,
+                       'data_fine': data_fine_gara,
+                       'codice': cod_gara,
+                       'aggiornato':date(1896, 3, 31),
+                       'nome': nome_gara,
+                       'link_gara': link_gara, # first modern olympics date
+                       'livello': livello_gara,
+                       'luogo': luogo_gara,
+                       'tipologia': tipologia_gara})
+
+    return df
 
 
 def update_gare_database(anno, mese='', regione='', categoria='', tipo=''):
@@ -102,14 +120,12 @@ def update_gare_database(anno, mese='', regione='', categoria='', tipo=''):
 
     df_gare['status'] = None
     df_gare['sigma'] = None
-    df_gare['livello'] = df_gare['codice'].str[:1]
-    df_gare['livello'] = df_gare['livello'].replace('C', 'N')
     df_gare['link_sigma'] = None
     df_gare['link_risultati'] = None
 
     # Get existing codes from database
     with engine.connect() as conn:
-        query = "SELECT codice FROM gare WHERE EXTRACT(YEAR FROM data) = %s"
+        query = "SELECT codice FROM gare WHERE EXTRACT(YEAR FROM data_inizio) = %s"
         if mese:
             query += " AND EXTRACT(MONTH FROM data) = %s"
             params = (anno, mese)
@@ -164,7 +180,7 @@ def classifica_sigma(row) -> pd.DataFrame | None:
 
     cod = row['codice']
     
-    meet_year = str(row['data'].year) # serve per creare il link
+    meet_year = str(row['data_inizio'].year) # serve per creare il link
     url3 = 'https://www.fidal.it/risultati/' + meet_year + '/' + cod + '/Index.htm' # link della home
     r3 = requests.get(url3).status_code
     
@@ -268,11 +284,11 @@ def get_meet_info(conn, update_criteria, where_clause=""):
 
         where_clause = f"""
             WHERE 
-                ABS(DATE '{todayis}' - data) < {time_span}
+                ABS(DATE '{todayis}' - data_inizio) < {time_span}
             OR 
                 (
-                    ((aggiornato - data) < {time_span})
-                    AND (DATE '{todayis}' - data) > 0
+                    ((aggiornato - data_fine) < {time_span})
+                    AND (DATE '{todayis}' - data_fine) > 0
                 )
             """
 
@@ -511,7 +527,7 @@ def get_events_link(conn, update_criteria, where_clause=''):
         print('Aggiorno tutti i link delle gare finite da al massimo ' + str(time_span) + ' giorni')
         where_clause = f"""
                 WHERE status = 'ok'
-                AND data BETWEEN
+                AND data_fine BETWEEN
                     DATE '{todayis}' - INTERVAL '{time_span} days'
                     AND DATE '{todayis}'
             """

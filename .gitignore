@@ -4,3 +4,4 @@ script/test.py
 venv/
 doc/Appunti.txt
 src/config.py
+src/foo.py
