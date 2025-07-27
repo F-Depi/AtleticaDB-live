@@ -7,6 +7,9 @@ start_time = time.time()
 
 
 """ Cerca nuove fare nel calendario """
+print('\n---------------------------------------------')
+print("Scarico l'elenco delle gare dal calendario Fidal")
+
 anno = '2025'
 mese = ''
 regione = ''
@@ -14,7 +17,11 @@ categoria = ''
 for tipo in ['3', '5']:
     update_gare_database(str(anno), mese, regione, categoria, tipo)
 
+
 """ Aggiorna le informazioni sulle gare """
+print('\n---------------------------------------------')
+print("Ottengo informazioni su ogni gara")
+
 update_condition = 'null' # righe appena aggiunte
 with get_db_engine().connect() as conn:
     get_meet_info(conn, update_condition)
@@ -23,38 +30,26 @@ update_condition = 'date_7' # routine update
 with get_db_engine().connect() as conn:
     get_meet_info(conn, update_condition)
 
-exit()
 
 
-############## Otteniamo i link a ogni risultato di ogni disciplina per ogni gara ################
-## usiamo come DataFrame ['Codice', 'Versione Sigma', 'Disciplina', 'Nome', 'Link']
+""" Otteniamo i link a ogni risultato di ogni disciplina per ogni gara """
 ## per ora ci occupiamo solo di trovare 'Nome' e 'Link'
-## get_events_link() prende i link trovati prima e tira fuori i link alle pagine di risultati delle
-## singole discipline. Aggiorna il file se lo trova.
+## get_events_link() prende link_risultati per ogni gara e salva tutti i link
+## che trova in quella pagina 
 ## NOTA: il criterio di aggiornamento è solo quello di aggiornare gare finite da meno di N giorni.
 ## Quindi gare più vecchie non vengono aggiornate, nel bene o nel male. Dovrei aggiungere un'altra
 ## colonna con 'Ultimo Aggiornamento', ma non oggi.
 print('\n---------------------------------------------')
 print("Ora cerco i link agli eventi di ogni gara")
 
-update_condition = 'all'
-
-if os.path.exists(file_risultati):
-
-    print(f"Ho trovato il file di risultati {file_risultati}, aggiorno questo.")
-    df_risultati_old = pd.read_csv(file_risultati)
-
-    df_risultati = get_events_link(df_gare, update_condition, df_risultati_old)
-
-else:
-    print(f"Non ho trovato il file {file_risultati}, lo creo.")
-    df_risultati = get_events_link(df_gare, 'ok')
-
-df_risultati = df_risultati.drop_duplicates(subset=['Link'])
-df_risultati.to_csv(file_risultati, index=False)
+update_condition = 'date_7'
+#update_condition = 'ok'
+#update_condition = 'scrape_60'
+with get_db_engine().connect() as conn:
+    get_events_link(conn, update_condition)
 
 
-
+exit()
 ################# Identifichiamo la disciplina corretta con il dizionari dei nomi #################
 ## molto del lavoro sul dizionario è stato inizialmente fatto a mano, poi gestito in dizionario.py
 ## I nomi dati alle discipline, che variano in base a quello che sceglie l'organizzatore della gara,
