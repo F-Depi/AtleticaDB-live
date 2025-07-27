@@ -6,58 +6,24 @@ from datetime import date, datetime
 from sqlalchemy import create_engine, text
 from config import DB_CONFIG
 
+
+tipologia_dict = {'0': 'nessuno',
+                  '2': 'cross',
+                  '3': 'indoor',
+                  '5': 'outdoor',
+                  '6': 'strada'
+                 }
+
+
 def get_sqlalchemy_connection_string():
     """Generates the connection string for SQLAlchemy."""
     return f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
+
 
 def get_db_engine():
     """Create and return SQLAlchemy engine."""
     connection_string = get_sqlalchemy_connection_string()
     return create_engine(connection_string)
-
-def update_gare_database(anno, mese='', regione='', categoria='', tipo='5'):
-    """Update the gare table with new meet codes."""
-    engine = get_db_engine()
-    
-    # Get new meet codes
-    df_REG_gare = extract_meet_codes_from_calendar(anno, mese, 'REG', regione, tipo, categoria)
-    df_COD_gare = extract_meet_codes_from_calendar(anno, mese, 'COD', regione, tipo, categoria)
-    
-    df_gare = pd.concat([df_REG_gare, df_COD_gare], ignore_index=True)
-    if df_gare.empty:
-        print("Both df_REG_gare and df_COD_gare is None, exiting...")
-        return
-
-    df_gare['status'] = None
-    df_gare['sigma'] = None
-    df_gare['livello'] = df_gare['codice'].str[:1]
-    df_gare['livello'] = df_gare['livello'].replace('C', 'N')
-    df_gare['link_sigma'] = None
-    df_gare['link_risultati'] = None
-    
-    # Get existing codes from database
-    with engine.connect() as conn:
-        query = "SELECT codice FROM gare WHERE EXTRACT(YEAR FROM data) = %s"
-        if mese:
-            query += " AND EXTRACT(MONTH FROM data) = %s"
-            params = (anno, mese)
-        else:
-            params = (anno,)
-        existing_codes = pd.read_sql(query, conn, params=params)
-        
-        # Filter new records
-        new_records = df_gare[~df_gare['codice'].isin(existing_codes['codice'])]
-        
-        if not new_records.empty:
-            print(f"Aggiungo {len(new_records['codice'])} nuovi codici gara")
-            
-            # Insert new records
-            new_records.to_sql('gare', conn, if_exists='append', index=False)
-            conn.commit()
-            print("Salvataggio completato!")
-
-        else:
-            print("Nessun nuovo codice gara da aggiungere")
 
 
 def extract_meet_codes_from_calendar(anno, mese, livello, regione, tipo, categoria) -> pd.DataFrame:
@@ -107,6 +73,7 @@ def extract_meet_codes_from_calendar(anno, mese, livello, regione, tipo, categor
                 meet_code.append(match[0])
                 
             df = pd.DataFrame({'data': dates, 'codice': meet_code, 'aggiornato':date(1896, 3, 31), 'nome': nome_gara, 'link_gara': home_gara}) # first modern olympics date
+            df['tipologia'] = tipologia_dict[tipo]
             
             return df
 
@@ -118,6 +85,51 @@ def extract_meet_codes_from_calendar(anno, mese, livello, regione, tipo, categor
     else:
         print("Failed to fetch the webpage. status code:", response.status_code)
         return pd.DataFrame()
+
+
+def update_gare_database(anno, mese='', regione='', categoria='', tipo=''):
+    """Update the gare table with new meet codes."""
+    engine = get_db_engine()
+    
+    # Get new meet codes
+    df_REG_gare = extract_meet_codes_from_calendar(anno, mese, 'REG', regione, tipo, categoria)
+    df_COD_gare = extract_meet_codes_from_calendar(anno, mese, 'COD', regione, tipo, categoria)
+    
+    df_gare = pd.concat([df_REG_gare, df_COD_gare], ignore_index=True)
+    if df_gare.empty:
+        print("Both df_REG_gare and df_COD_gare is None, exiting...")
+        return
+
+    df_gare['status'] = None
+    df_gare['sigma'] = None
+    df_gare['livello'] = df_gare['codice'].str[:1]
+    df_gare['livello'] = df_gare['livello'].replace('C', 'N')
+    df_gare['link_sigma'] = None
+    df_gare['link_risultati'] = None
+
+    # Get existing codes from database
+    with engine.connect() as conn:
+        query = "SELECT codice FROM gare WHERE EXTRACT(YEAR FROM data) = %s"
+        if mese:
+            query += " AND EXTRACT(MONTH FROM data) = %s"
+            params = (anno, mese)
+        else:
+            params = (anno,)
+        existing_codes = pd.read_sql(query, conn, params=params)
+        
+        # Filter new records
+        new_records = df_gare[~df_gare['codice'].isin(existing_codes['codice'])]
+        
+        if not new_records.empty:
+            print(f"Aggiungo {len(new_records['codice'])} nuovi codici gara")
+            
+            # Insert new records
+            new_records.to_sql('gare', conn, if_exists='append', index=False)
+            conn.commit()
+            print("Salvataggio completato!")
+
+        else:
+            print("Nessun nuovo codice gara da aggiungere")
 
 
 def updates_DB_gara_row(row, conn):

@@ -12,7 +12,7 @@ mese = ''
 regione = ''
 categoria = ''
 for tipo in ['3', '5']:
-    update_gare_database(str(anno), mese, regione, categoria, tipo=tipo)
+    update_gare_database(str(anno), mese, regione, categoria, tipo)
 
 """ Aggiorna le informazioni sulle gare """
 update_condition = 'null' # righe appena aggiunte
