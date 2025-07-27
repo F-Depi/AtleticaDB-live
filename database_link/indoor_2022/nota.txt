@@ -1,3 +1,0 @@
-2022-01-22	REG27334	https://www.fidal.it/risultati/2022/REG27334/Index.htm	https://www.fidal.it/risultati/2022/REG27334/RESULTSBYEVENT1.htm	Vecchio #1	ok	2024-02-09
-
-è buggata e ha 24 pagine di risultati quando in realtà sono tutte copie della prima. L'errore è stato corretto a mano.
