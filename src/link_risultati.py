@@ -6,13 +6,13 @@ import time
 start_time = time.time()
 
 
-anno = '2024'
+""" Cerca nuove fare nel calendario """
+anno = '2025'
 mese = ''
 regione = ''
 categoria = ''
-""" Cerca nuove fare nel calendario """
-update_gare_database(anno, mese, regione, categoria)
-
+for tipo in ['3', '5']:
+    update_gare_database(str(anno), mese, regione, categoria, tipo=tipo)
 
 """ Aggiorna le informazioni sulle gare """
 update_condition = 'null' # righe appena aggiunte
@@ -24,6 +24,7 @@ with get_db_engine().connect() as conn:
     get_meet_info(conn, update_condition)
 
 exit()
+
 
 ############## Otteniamo i link a ogni risultato di ogni disciplina per ogni gara ################
 ## usiamo come DataFrame ['Codice', 'Versione Sigma', 'Disciplina', 'Nome', 'Link']

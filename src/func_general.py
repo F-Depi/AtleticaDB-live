@@ -23,13 +23,10 @@ def update_gare_database(anno, mese='', regione='', categoria='', tipo='5'):
     df_REG_gare = extract_meet_codes_from_calendar(anno, mese, 'REG', regione, tipo, categoria)
     df_COD_gare = extract_meet_codes_from_calendar(anno, mese, 'COD', regione, tipo, categoria)
     
-    dfs = [df_REG_gare, df_COD_gare]
-    dfs = [df for df in dfs if df is not None]
-    if dfs:
-        df_gare = pd.concat(dfs, ignore_index=True)
-    else:
+    df_gare = pd.concat([df_REG_gare, df_COD_gare], ignore_index=True)
+    if df_gare.empty:
         print("Both df_REG_gare and df_COD_gare is None, exiting...")
-        exit()
+        return
 
     df_gare['status'] = None
     df_gare['sigma'] = None
@@ -37,8 +34,6 @@ def update_gare_database(anno, mese='', regione='', categoria='', tipo='5'):
     df_gare['livello'] = df_gare['livello'].replace('C', 'N')
     df_gare['link_sigma'] = None
     df_gare['link_risultati'] = None
-
-    
     
     # Get existing codes from database
     with engine.connect() as conn:
@@ -65,7 +60,7 @@ def update_gare_database(anno, mese='', regione='', categoria='', tipo='5'):
             print("Nessun nuovo codice gara da aggiungere")
 
 
-def extract_meet_codes_from_calendar(anno, mese, livello, regione, tipo, categoria) -> pd.DataFrame | None:
+def extract_meet_codes_from_calendar(anno, mese, livello, regione, tipo, categoria) -> pd.DataFrame:
     ## Scarica informazioni sulle gare presenti nel calendario fidal https://www.fidal.it/calendario.php
      # Per ogni gara scarica codice gara, data, nome, home page della gara
      # 'aggiornato' è messo di defaul al 31 marzo 1896, data simbolica per dire che i risultati
@@ -118,11 +113,11 @@ def extract_meet_codes_from_calendar(anno, mese, livello, regione, tipo, categor
 
         else:
             print('No tables with class \'table_btm\' found')
-            return None
+            return pd.DataFrame()
         
     else:
         print("Failed to fetch the webpage. status code:", response.status_code)
-        return None
+        return pd.DataFrame()
 
 
 def updates_DB_gara_row(row, conn):
@@ -229,7 +224,7 @@ def classifica_sigma(row) -> pd.DataFrame | None:
         return None
 
 
-def get_meet_info(conn, update_criteria):
+def get_meet_info(conn, update_criteria, where_clause=""):
     """
     Trova i link da mettere nelle colonne 'link_sigma', 'link_risultati' per
     ogni meeting aggiorna anche le colonne 'sigma', 'status', 'aggiornato' 
@@ -247,12 +242,12 @@ def get_meet_info(conn, update_criteria):
                      'status' aggiorna le gare che hanno status diverso da 'ok'
                               assieme al quelle che hanno Sigma Vecchio #1 e #2
                      'null'   aggiorna le righe con status null
+                     'custom' utilizza la where_clause in input
     """
     
     todayis = datetime.today().date()
 
     # Build WHERE clause
-    where_clause = ""
     if update_criteria.startswith('date_'):
         # Rows I want to check: if today is 7 days from/prior to the meet
         #                       or if it wasn't updated N days after the meet
@@ -283,6 +278,10 @@ def get_meet_info(conn, update_criteria):
     elif update_criteria == 'null':
         print("Aggiorno i link per le gare con status null")
         where_clause = "WHERE status is null"
+    
+    elif update_criteria == 'custom':
+        print(f"Uso:")
+        print(where_clause)
 
     else:
         print("Update criteria non valido. Quelli validi sono:\n'date_N', 'status' and 'all'")
