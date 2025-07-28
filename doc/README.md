@@ -28,6 +28,7 @@ https://www.fidal.it/calendario.php?anno=2025&mese=1&livello=REG&new_regione=VEN
     - indoor = 3
     - outdoor = 5
     - strada = 6
+    - piazza = 10
     - ...
 
 - new_categoria

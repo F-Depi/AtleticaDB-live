@@ -366,7 +366,7 @@ def get_events_link_sigma_nuovo(row, conn):
     url = row['link_risultati']
     if row['tipologia'] == 'indoor':
         ambiente = 'I'
-    elif row['tipologia'] in ('outdoor', 'pista'):
+    elif row['tipologia'] in ('outdoor', 'pista', 'piazza e altri ambiti'):
         ambiente = 'P'
     else:
         print(f"Non conosco la tipologia {row['tipologia']}")
@@ -411,7 +411,7 @@ def get_events_link_sigma_vecchio(row, conn):
 
     if tipologia == 'indoor':
         ambiente = 'I'
-    elif row['tipologia'] in ('outdoor', 'pista'):
+    elif tipologia in ('outdoor', 'pista', 'piazza e altri ambiti'):
         ambiente = 'P'
     else:
         print(f"Non conosco la tipologia {tipologia}")
@@ -452,7 +452,7 @@ def get_events_link_sigma_vecchissimo(row, conn):
     url = row['link_risultati']
     if row['tipologia'] == 'indoor':
         ambiente = 'I'
-    elif row['tipologia'] in ('outdoor', 'pista'):
+    elif row['tipologia'] in ('outdoor', 'pista', 'piazza e altri ambiti'):
         ambiente = 'P'
     else:
         print(f"Non conosco la tipologia {row['tipologia']}")

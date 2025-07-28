@@ -14,7 +14,7 @@ anno = '2025'
 mese = ''
 regione = ''
 categoria = ''
-for tipo in ['3', '5']:
+for tipo in ['3', '5', '10']:
     update_gare_database(str(anno), mese, regione, categoria, tipo)
 
 
