@@ -7,14 +7,6 @@ from sqlalchemy import create_engine, text
 from config import DB_CONFIG
 
 
-tipologia_dict = {'0': 'nessuno',
-                  '2': 'cross',
-                  '3': 'indoor',
-                  '5': 'outdoor',
-                  '6': 'strada'
-                 }
-
-
 def get_sqlalchemy_connection_string():
     """Generates the connection string for SQLAlchemy."""
     return f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
@@ -374,7 +366,7 @@ def get_events_link_sigma_nuovo(row, conn):
     url = row['link_risultati']
     if row['tipologia'] == 'indoor':
         ambiente = 'I'
-    elif row['tipologia'] == 'outdoor':
+    elif row['tipologia'] in ('outdoor', 'pista'):
         ambiente = 'P'
     else:
         print(f"Non conosco la tipologia {row['tipologia']}")
@@ -419,7 +411,7 @@ def get_events_link_sigma_vecchio(row, conn):
 
     if tipologia == 'indoor':
         ambiente = 'I'
-    elif tipologia == 'outdoor':
+    elif row['tipologia'] in ('outdoor', 'pista'):
         ambiente = 'P'
     else:
         print(f"Non conosco la tipologia {tipologia}")
@@ -460,7 +452,7 @@ def get_events_link_sigma_vecchissimo(row, conn):
     url = row['link_risultati']
     if row['tipologia'] == 'indoor':
         ambiente = 'I'
-    elif row['tipologia'] == 'outdoor':
+    elif row['tipologia'] in ('outdoor', 'pista'):
         ambiente = 'P'
     else:
         print(f"Non conosco la tipologia {row['tipologia']}")
