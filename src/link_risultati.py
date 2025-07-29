@@ -1,7 +1,6 @@
-import pandas as pd
-import os
-from func_general import update_gare_database, get_meet_info, get_events_link, get_db_engine
-from func_assegnazione_evento import assegna_evento_generale, assegna_evento_specifico
+from sqlalchemy import update
+from func_general import update_gare_database, get_meet_info, get_events_link, get_db_engine, assegna_evento
+
 import time
 start_time = time.time()
 
@@ -26,7 +25,7 @@ update_condition = 'null' # righe appena aggiunte
 with get_db_engine().connect() as conn:
     get_meet_info(conn, update_condition)
 
-update_condition = 'date_7' # routine update
+update_condition = 'date_0' # routine update
 with get_db_engine().connect() as conn:
     get_meet_info(conn, update_condition)
 
@@ -42,21 +41,35 @@ with get_db_engine().connect() as conn:
 print('\n---------------------------------------------')
 print("Ora cerco i link agli eventi di ogni gara")
 
-update_condition = 'date_7'
+update_condition = 'date_0'
 #update_condition = 'ok'
 #update_condition = 'scrape_60'
 with get_db_engine().connect() as conn:
     get_events_link(conn, update_condition)
 
 
-exit()
-################# Identifichiamo la disciplina corretta con il dizionari dei nomi #################
+""" Identifichiamo la disciplina corretta con il dizionari dei nomi """
+update_condition = 'null'
+update_condition = 'custom'
+where_clause = "WHERE POSITION('/2025/' IN link) > 0"
+with get_db_engine().connect() as conn:
+    assegna_evento(conn, update_condition, where_clause)
+
+
+print("--- %s secondi ---" % round(time.time() - start_time, 2))
+
+
+
+
+
+
 ## molto del lavoro sul dizionario è stato inizialmente fatto a mano, poi gestito in dizionario.py
 ## I nomi dati alle discipline, che variano in base a quello che sceglie l'organizzatore della gara,
 ## vengono "puliti" dalla funzione hard_strip() per ridurre le dimensioni del dizionario.
 ## Il rischio di errore in questa parte è alto a causa di typo miei, nomi molto ambigui, hard_strip()
 ## che incontra un nome così strano che tolta qualche lettera diventa una disciplina diversa (ho fatto
 ## in modo che questa cosa sia improbabile)
+
 """ print('---------------------------------------------')
 print('Applico il dizionario per dare il nome corretto agli eventi')
 
@@ -82,30 +95,3 @@ if eventi_ignoti:
         f2.write('Nome,Disciplina\n')
         for a, b in eventi_ignoti:
             f2.write(a+','+b+'\n') """
-
-
-for ii, row  in df_risultati.iterrows():
-
-    nome = df_risultati.loc[ii,'Nome']
-    disciplina = df_risultati.loc[ii,'Disciplina']
-    link = df_risultati.loc[ii, 'Link']
-    nome = str(nome)
-    disciplina = str(disciplina).strip()
-    link = str(link)
-
-    #if disciplina == 'boh':
-
-    eve_gen = ''
-    warn_gen = ''
-    eve_spec = ''
-    eve_gen = ''
-
-    eve_gen, warn_gen = assegna_evento_generale(nome, link)
-    eve_spec, warn_spec = assegna_evento_specifico(nome, eve_gen)
-
-    df_risultati.loc[ii,'Disciplina'] = eve_spec
-    df_risultati.loc[ii,'Warning'] = (warn_gen+' '+warn_spec).strip()
-
-
-print("--- %s secondi ---" % round(time.time() - start_time, 2))
-df_risultati.to_csv(file_risultati, index=False)
