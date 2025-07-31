@@ -22,7 +22,7 @@ for tipo in ['3', '5', '10']:
 print('\n---------------------------------------------')
 print("Ottengo informazioni su ogni gara")
 
-update_condition = 'date_7' # routine update
+update_condition = 'date_0' # routine update
 with get_db_engine().connect() as conn:
     get_meet_info(conn, update_condition)
 
@@ -39,19 +39,40 @@ print('\n---------------------------------------------')
 print("Ora cerco i link agli eventi di ogni gara")
 
 update_condition = 'date_7'
-#update_condition = 'scrape_60'
+update_condition = 'scrape_60'
 with get_db_engine().connect() as conn:
     get_events_link(conn, update_condition)
-exit()
 
 
 
-""" Identifichiamo la disciplina corretta con il dizionari dei nomi """
+"""
+Identifichiamo la disciplina corretta con il dizionari dei nomi
+
+                            
+                            La Grande Delusione                                
+
+Identificare la disciplina corretta è l'inferno. Il nome a una pagina di
+risultati di una gara viene dato in modo molto arbitrario e fantasioso.
+Gli sforzi per identificare in modo sistematico la disciplina esatta in una gara
+con sigma vecchio e vecchissimo sono stati immani e, per quanto i risultati
+siano sembrati a momenti promettenti, non ritengo che aver raggiunto
+un'accuratezza che mi permetterebbe di dormire tranquillo la notte.
+C'era però una luce in fondo al tunnel. Il sigma nuovo presenta in ogni pagina
+di risultati, a fianco alla scritta risultati, una label dall'aspetto molto 
+ufficiale riguardo la disciplina a cui sono associati quei risultati.
+Pensavo, sognavo, che quella disciplina fosse generata automaticamente dal 
+sistema e mi desse informazioni esatte sulla disciplina. Immaginavo un futuro
+in cui tutte le regioni sarebbero finalmente passate al sigma nuovo e il 
+problema di identificare la disciplina si sarebbe risolto.
+Ahimé, ahi noi, è stato un abbaglio. Anche quella label, che sembra una
+disciplina ufficiale, non è altro che una scritta messa a mano dai giudici...
+arbitraria, ambigua, talvolta addirittura errata...
+Non c'è mai stata una luce in fondo al tunnel
+7324 nomi distinti su 53069
+"""
 update_condition = 'null'
-update_condition = 'custom'
-where_clause = "WHERE POSITION('/2025/' IN link) > 0"
 with get_db_engine().connect() as conn:
-    assegna_evento(conn, update_condition, where_clause)
+    assegna_evento(conn, update_condition)
 
 
 print("--- %s secondi ---" % round(time.time() - start_time, 2))

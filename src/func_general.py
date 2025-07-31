@@ -251,8 +251,8 @@ def classifica_sigma(codice, anno):
         # mentre quella di risultati e' sempre GaraXXX.htm
         for a in a_elements:
             href = a.get("href")
-            match1 = re.match(r"Gara\d{3}\.htm$", href)
-            match2 = re.match(r"Diffr.*\.htm$", href)
+            match1 = re.match(r"Gara\d{3}\.htm", href)
+            match2 = re.match(r"Diffr.*\.htm", href)
 
             if href and (match1 or match2):
                 return 'vecchissimo', 'risultati'
@@ -674,7 +674,7 @@ def get_events_link(conn, update_condition, where_clause=''):
     print(f"{num_new_rows} where added")
 
 
-def assegna_evento_generale(nome_evento, link):
+def assegna_evento_generale(nome_evento, gara):
     """ Mi fido del me stesso di qualche anno fa, non ho intenzione di
     controllare quesa funzione """
     ## dato un nome di un evento n, come appare nella pagina della gara, gli assegna una categoria generale:
@@ -682,7 +682,6 @@ def assegna_evento_generale(nome_evento, link):
     ## 'lungo','alto','triplo','quadruplo','ostacoli','marcia','staffetta','corsa piana','prove multiple','boh'
     ## restituisce il nome della categoria e un'altra stringa con i possibili warning
     
-    link = link.split('/')[-1].lower()
     nome_evento = nome_evento.lower().replace('finale','').replace('finali','').replace('batterie','').replace('mt.','').replace('metri','').strip()
     nome_evento = nome_evento.replace('1\u00b0','').replace('2\u00b0','').replace('3\u00b0','')
     evento_generale = ''
@@ -719,7 +718,7 @@ def assegna_evento_generale(nome_evento, link):
     
     # ALTRO
     for word in ['list','soc','partecipanti','risultat']:
-        if link.startswith(word):
+        if gara.startswith(word):
             evento_generale = 'altro'
             warning_evento= ''
             return evento_generale, warning_evento
@@ -1392,16 +1391,55 @@ def assegna_evento_specifico(nome, eve):
     return spec, warn_spec
 
 
+def assegna_evento_sigma_nuovo(row, conn):
+    """
+    Grazie ha dio il sigma nuovo ha la disciplina esatta nella pagina di 
+    risultati
+    """
+
+    gara = row['gara']
+    match1 = re.match(r"Gara\d{3}\.htm", gara)
+    match2 = re.match(r"Diffr.*\.htm", gara)
+
+    # Faremo solo i risultati
+    if (match1 is None) and (match2 is None):
+        return
+
+    url = f"{DOMAIN}{row['anno']}/{row['codice']}/Risultati/{gara}"
+    try:
+        r = requests.get(url)
+        if r.status_code != 200:
+            print("Link rotto", url)
+            return
+        
+        soup = BeautifulSoup(r.text, 'html.parser')
+        div = soup.find('div', class_='col-md-4')
+        p = div.find('p', class_='h4 text-danger mb-4 mt-4')
+        span = p.find('span', class_='h7 text-danger')
+        disciplina = span.text[2:].strip() # finally
+        
+        query = text(f"""UPDATE pagine_gara
+                     SET disciplina = :disciplina
+                     WHERE id = {row['id']}""")
+        conn.execute(query, {'disciplina': disciplina})
+        conn.commit()
+    except:
+        print("Qualcosa è andato storto:", url)
+        return
+
+
+
 def assegna_evento(conn, update_contidion, where_clause=''):
     """
     Wrapper che applica le GOATED assegna_evento_generale() e
     assegna_evento_specifico() al database secondo
     update_condition: 'null' aggiorna tutte le righe che hanno disciplina null
                       'custom' usa la where_clause in input
+    assegna anche lo status di iscrizioni/start list/risultato
     """
 
     if update_contidion == 'null':
-        where_clause = "WHERE disciplina is null"
+        where_clause = "WHERE disciplina IS NULL"
     elif update_contidion == 'custom':
         print("Uso:")
         print(where_clause)
@@ -1409,15 +1447,19 @@ def assegna_evento(conn, update_contidion, where_clause=''):
         print("Non conosco l'update_condition", update_contidion)
         return
 
-    query = f"SELECT * FROM pagine_risultati {where_clause}"
+    query = f"SELECT * FROM pagine_gara {where_clause}"
     df = pd.read_sql_query(query, conn)
     
-    for _, row in df.iterrows():
-        event_gen, warn_gen = assegna_evento_generale(row['nome'], row['link'])
+    ## Nomi per sigma vecchio e vecchissimo
+    df_old = df[df['sigma'] != 'nuovo'].reset_index(drop=True)
+    tot = len(df_old)
+    for ii, row in df_old.iterrows():
+        print(f"\t{ii:d}/{tot:d}", end="\r")
+        event_gen, warn_gen = assegna_evento_generale(row['nome'], row['gara'])
         event_spec, warn_spec = assegna_evento_specifico(row['nome'], event_gen)
         
         update_query = text("""
-            UPDATE pagine_risultati SET
+            UPDATE pagine_gara SET
                 disciplina = :disciplina,
                 warn_gen = :warn_gen,
                 warn_spec = :warn_spec
@@ -1431,6 +1473,15 @@ def assegna_evento(conn, update_contidion, where_clause=''):
         })
     
     conn.commit()
+
+    ## Nomi per sigma nuovo
+    df_new = df[df['sigma'] == 'nuovo']
+    tot = len(df_new)
+    print("sigma nuovo", tot)
+    for ii, row in df_new.iterrows():
+        print(f"\t{ii:d}/{tot:d}", end="\r")
+        assegna_evento_sigma_nuovo(row, conn)
+
 
 
 
