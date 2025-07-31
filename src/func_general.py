@@ -569,8 +569,8 @@ def get_events_link(conn, update_condition, where_clause=''):
     
     conn:             connessione al database
     update_condition: 'date_N'    per controllare solo le gare svolte da N giorni
-                      'scrape_M'  per controllare le gare non controllate da più
-                                  di M minuti
+                      'scrape_M'  per controllare le gare di oggi che non sono
+                                  state controllate da più di M minuti
                       'all'       per controllare tutto il database (non NULL)
                       'custom'    usa la where_clause in input
     """
@@ -592,8 +592,9 @@ def get_events_link(conn, update_condition, where_clause=''):
         minutes = int(update_condition.split('_')[1])  # quanti minuti fa è stato fatto lo scraping
         print(f"Controllo gare non controllate da più di {minutes} minuti")
 
-        where_clause = f"""
-            WHERE status is not null
+        where_clause = f"""WHERE
+            status is not null
+            AND DATE '{todayis}' BETWEEN data_inizio AND data_fine
             AND (
                 scraped_risultati IS NULL OR
                 scraped_risultati < (CURRENT_TIMESTAMP - INTERVAL '{minutes} minutes')

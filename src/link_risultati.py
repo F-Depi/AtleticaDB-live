@@ -39,7 +39,7 @@ print('\n---------------------------------------------')
 print("Ora cerco i link agli eventi di ogni gara")
 
 update_condition = 'date_7'
-update_condition = 'scrape_60'
+#update_condition = 'scrape_60'
 with get_db_engine().connect() as conn:
     get_events_link(conn, update_condition)
 exit()
