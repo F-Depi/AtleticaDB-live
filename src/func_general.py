@@ -6,6 +6,7 @@ from datetime import date, datetime
 from sqlalchemy import create_engine, text
 from config import DB_CONFIG
 
+DOMAIN = "https://www.fidal.it/risultati/"
 
 def get_sqlalchemy_connection_string():
     """Generates the connection string for SQLAlchemy."""
@@ -30,7 +31,17 @@ def extract_meet_codes_from_calendar(anno, mese, livello, regione, tipo, categor
     """
     
     ## Componiamo il link con i parametri del filtro
-    url = 'https://www.fidal.it/calendario.php?anno='+anno+'&mese='+mese+'&livello='+livello+'&new_regione='+regione+'&new_tipo='+tipo+'&new_categoria='+categoria+'&submit=Invia'
+    url = (
+            f"https://www.fidal.it/calendario.php?"
+            f"anno={anno}&"
+            f"mese={mese}&"
+            f"livello={livello}&"
+            f"new_regione={regione}&"
+            f"new_tipo={tipo}&"
+            f"new_categoria={categoria}&"
+            f"submit=Invia"
+        )
+
     response = requests.get(url)
 
     if response.status_code != 200:
@@ -112,18 +123,11 @@ def update_gare_database(anno, mese='', regione='', categoria='', tipo=''):
 
     df_gare['status'] = None
     df_gare['sigma'] = None
-    df_gare['link_sigma'] = None
-    df_gare['link_risultati'] = None
 
     # Get existing codes from database
     with engine.connect() as conn:
-        query = "SELECT codice FROM gare WHERE EXTRACT(YEAR FROM data_inizio) = %s"
-        if mese:
-            query += " AND EXTRACT(MONTH FROM data) = %s"
-            params = (anno, mese)
-        else:
-            params = (anno,)
-        existing_codes = pd.read_sql(query, conn, params=params)
+        query = f"SELECT codice FROM gare WHERE EXTRACT(YEAR FROM data_inizio) = {anno}"
+        existing_codes = pd.read_sql(query, conn)
         
         # Filter new records
         new_records = df_gare[~df_gare['codice'].isin(existing_codes['codice'])]
@@ -142,20 +146,17 @@ def update_gare_database(anno, mese='', regione='', categoria='', tipo=''):
 
 def updates_DB_gara_row(row, conn):
     """
-    Modify one row of the DB
+    Modifica le colonne sigma, status and aggiornato di una riga della tabella
+    gare
     """
     sql = text("""
         UPDATE gare SET
-            link_sigma = :link_sigma,
-            link_risultati = :link_risultati,
             sigma = :sigma,
             status = :status,
             aggiornato = :aggiornato
         WHERE codice = :codice
     """)
     conn.execute(sql, {
-        'link_sigma': row['link_sigma'],
-        'link_risultati': row['link_risultati'],
         'sigma': row['sigma'],
         'status': row['status'],
         'aggiornato': row['aggiornato'],
@@ -164,103 +165,116 @@ def updates_DB_gara_row(row, conn):
     conn.commit()
 
 
-def classifica_sigma(row) -> pd.DataFrame | None:
+def classifica_sigma(codice, anno):
     """
-    capisce che versione di sigma viene utilizzato a una gara e restituisce
-    la riga del dataframe con le informazioni
+    Capisce che versione di sigma viene utilizzato a una gara e restituisce
+    sigma: versione del sigma usata dalla gara
+    status: NULL, iscritti, risultati
     """
 
-    cod = row['codice']
+    # link della home del sigma
+    url3 = f"{DOMAIN}{anno}/{codice}/Index.htm" 
+    request_main = requests.get(url3)
+    r3 = request_main.status_code
     
-    meet_year = str(row['data_inizio'].year) # serve per creare il link
-    url3 = 'https://www.fidal.it/risultati/' + meet_year + '/' + cod + '/Index.htm' # link della home
-    r3 = requests.get(url3).status_code
-    
-    if r3 == 404: # la home è comune a tutti, quindi deve esistere se esiste una pagina della gara
-        row['link_sigma'] = None
-        row['link_risultati'] = None
-        row['sigma'] = None
-        row['status'] = 'Gara non esistente'
-        return row
+    # E' comune a tutti, quindi deve esistere se esiste una pagina del sigma
+    if r3 == 404:
+        return None, None
         
-    elif r3 == 200: # C'è la home. Ora devo solo capire che versione di sigma c'è. Arrivato a questo punto coinsidero possibile solo che le richieste abbiamo come risposta 200 o 404.
-        row['link_sigma'] = url3
+    # C'è la home. Ora devo solo capire che versione di sigma c'è.
+    # Arrivato a questo punto coinsidero possibile solo che le richieste abbiamo
+    # come risposta 200 o 404.
+    elif r3 == 200:
 
         ## Vediamo se è sigma nuovo
-        url1 = 'https://www.fidal.it/risultati/'+meet_year+'/' + cod + '/Risultati/IndexRisultatiPerGara.html'
+        url1 = f"{DOMAIN}{anno}/{codice}/Risultati/IndexRisultatiPerGara.html"
         r1 = requests.get(url1).status_code
-        if r1 == 200:                                                                               # trovato nuovo con risultati
-            row['link_risultati'] = url1
-            row['sigma'] = 'Nuovo'
-            row['status'] = 'ok'
-            return row
+        if r1 == 200: # trovato nuovo con risultati                                                                               
+            return 'nuovo', 'risultati'
         
-        url1_1 = 'https://www.fidal.it/risultati/'+meet_year+'/' + cod + '/Iscrizioni/IndexPerGara.html'     # trovato nuovo ma senza risultati
+        url1_1 = f"{DOMAIN}{anno}/{codice}/Iscrizioni/IndexPerGara.html"     
         r1_1 = requests.get(url1_1).status_code
-        if r1_1 == 200:
-            row['link_risultati'] = None
-            row['sigma'] = 'Nuovo'
-            row['status'] = 'link_risultati non ancora disponibili'
-            return row
+        if r1_1 == 200: # trovato nuovo ma senza risultati
+            return 'nuovo', 'iscritti'
         
         ## Vediamo se è sigma vecchio
-        url2 = 'https://www.fidal.it/risultati/'+meet_year+'/' + cod + '/RESULTSBYEVENT1.htm'                # trovato vecchio con risultati
+        url2 = f"{DOMAIN}{anno}/{codice}/RESULTSBYEVENT1.htm"                
         r2 = requests.get(url2).status_code
-        if r2 == 200:
-            row['link_risultati'] = url2
-            row['sigma'] = 'Vecchio #1'
-            row['status'] = 'ok'
+        if r2 == 200: # trovato vecchio con risultati
+            sigma = 'vecchio #1'
             
-            # Possono esistere anche /RESULTSBYEVENT2.htm, /RESULTSBYEVENT3.htm, ..., /RESULTSBYEVENTN.htm
+            # Possono esistere anche
+            # /RESULTSBYEVENT2.htm, /RESULTSBYEVENT3.htm, ..., /RESULTSBYEVENTN.htm
             for jj in range(2, 30):
                 
-                url2_jj = 'https://www.fidal.it/risultati/'+meet_year+'/' + cod + '/RESULTSBYEVENT'+str(jj)+'.htm'
+                url2_jj = f"{DOMAIN}{anno}/{codice}/RESULTSBYEVENT{jj:d}.htm"
                 r2_jj = requests.get(url2_jj).status_code
                 if r2_jj == 200:
-                    if jj == 4: print('Attenzione questa gara ha più di 3 link: '+url2_jj)
-                    if jj == 21: print('ATTENZIONE questa gara ha più di 20 link: '+url2_jj)
-                    row['sigma'] = 'Vecchio #'+str(jj)
+                    if jj == 21:
+                        print('ATTENZIONE questa gara ha più di 20 link:', url2_jj)
+                    sigma = f"vecchio #{jj:d}"
 
-                else: continue
+                else:
+                    continue
                 
-            return row
+            return sigma, 'risultati'
         
-        url2_1 = 'https://www.fidal.it/risultati/'+meet_year+'/' + cod + '/entrylistbyevent1.htm'            # trovato vecchio senza risultati
+        url2_1 = f"{DOMAIN}{anno}/{codice}/entrylistbyevent1.htm"            
         r2_1 = requests.get(url2_1).status_code
-        if r2_1 == 200:
-            row['link_risultati'] = 'Non ancora disponibili'
-            row['sigma'] = 'Vecchio'
-            row['status'] = 'link_risultati non ancora disponibili'
-            return row
+        if r2_1 == 200: # trovato vecchio senza risultati
+            sigma = 'vecchio #1'
+            
+            # Possono esistere anche
+            # /ENTRYLISTBYEVENT2.htm, /ENTRYLISTBYEVENT3.htm, ..., /ENTRYLISTBYEVENTN.htm
+            for jj in range(2, 30):
+                
+                url2_jj = f"{DOMAIN}{anno}/{codice}/ENTRYLISTBYEVENT{jj:d}.htm"
+                r2_jj = requests.get(url2_jj).status_code
+                if r2_jj == 200:
+                    if jj == 21:
+                        print('ATTENZIONE questa gara ha più di 20 link:', url2_jj)
+                    sigma = f"vecchio #{jj:d}"
+
+                else:
+                    continue
+                
+            return sigma, 'iscritti'
 
         ## Se non è pan è polenta. Questo deve essere sigma vecchissimo
-        row['link_risultati'] = url3
-        row['sigma'] = 'Vecchissimo'
-        row['status'] = 'ok'
-        return row
+        # Controllo se ci sono link di risultati
+
+        soup = BeautifulSoup(request_main.text, 'html.parser')
+        a_elements = soup.find_all('a', class_='idx_link')
+        # L'unica differenza costante tra colonna di iscritti e colonna di
+        # risultati sembra essere che quella di iscritti contine href del tipo
+        # GaraLXXX.htm oppure StaffXXX.htm
+        # mentre quella di risultati e' sempre GaraXXX.htm
+        for a in a_elements:
+            href = a.get("href")
+            match1 = re.match(r"Gara\d{3}\.htm$", href)
+            match2 = re.match(r"Diffr.*\.htm$", href)
+
+            if href and (match1 or match2):
+                return 'vecchissimo', 'risultati'
+        
+        return 'vecchissimo', 'iscritti'
         
     else:
-        print('la risposta della pagina è ' + str(r3) + '... e mo\'?')
+        print(f"la risposta della pagina è {r3:d}... e mo'?")
         return None
 
 
 def get_meet_info(conn, update_condition, where_clause=""):
     """
-    Trova i link da mettere nelle colonne 'link_sigma', 'link_risultati' per
-    ogni meeting aggiorna anche le colonne 'sigma', 'status', 'aggiornato' 
-    perché sono utili.
-    
-    Inizia controllando se esiste
-    'https://www.fidal.it/risultati/2024/' + cod + '/Index.htm'
-    e, in caso affermativo, continua cercando la pagina di risultati e la
-    versione di sigma utilizzata
+    Controlla la versione del sigma, se ci sono iscritti e/o risultati e lascia
+    la data dell'ultimo controllo per ogni gara filtrata da 
     
     update_condition: 'all' per ricontrollare tutte le righe
                      'date_N' per aggiornare solo le gare che non sono state
                               aggiornate nell'intorno di N giorni dalla data
                               della gara stessa
                      'status' aggiorna le gare che hanno status diverso da 'ok'
-                              assieme al quelle che hanno Sigma Vecchio #1 e #2
+                              assieme al quelle che hanno Sigma vecchio #1 e #2
                      'null'   aggiorna le righe con status null
                      'custom' utilizza la where_clause in input
     """
@@ -286,20 +300,27 @@ def get_meet_info(conn, update_condition, where_clause=""):
 
     elif update_condition == 'status':
         print("Aggiorno i link per le gare con status diverso da 'ok' "
-              "e quelle con il Sigma Vecchio #1 e #2.")
+              "e quelle con il Sigma vecchio #1 e #2.")
         where_clause = f"""
             WHERE
                 status != 'ok'
                 OR status IS NULL
-                OR sigma = 'Vecchio #1'
-                OR sigma = 'Vecchio #2'
+                OR sigma = 'vecchio #1'
+                OR sigma = 'vecchio #2'
         """
 
     elif update_condition == 'null':
         print("Aggiorno i link per le gare con status null")
         where_clause = "WHERE status is null"
+
+    elif update_condition == 'all':
+        print("Aggiorno tutto")
+        where_clause = ''
     
     elif update_condition == 'custom':
+        if where_clause == '':
+            print("where_clause vuota. Per aggiornare tutto usa 'all'")
+            return
         print(f"Uso:")
         print(where_clause)
 
@@ -308,7 +329,7 @@ def get_meet_info(conn, update_condition, where_clause=""):
         return 
     
     query = f"SELECT * FROM gare {where_clause}"
-    df_gare = pd.read_sql(query, conn)
+    df_gare = pd.read_sql(query, conn).reset_index(drop=True)
 
     if df_gare.empty:
         print("Non c'è nulla da aggiornare")
@@ -318,53 +339,69 @@ def get_meet_info(conn, update_condition, where_clause=""):
     tot = len(df_gare)
     print(f"Aggiorno {tot} righe")
 
-    kk = 1
-    ee = 0
-    for _, row in df_gare.iterrows():
-        print('\t' + str(kk) + '/' + str(tot), end="\r")
-        kk += 1
-        row_updated = classifica_sigma(row)
-        if row_updated is not None:
-            row_updated['aggiornato'] = todayis
-            if (row != row_updated).any():
-                ee += 1
-            updates_DB_gara_row(row_updated, conn)
+    jj = 0 # conta le righe modificate
+    for ii, row in df_gare.iterrows():
+        print(f"\t{ii:d}/{tot:d}", end="\r")
 
-    print(f"{ee} righe sono state aggiornate")
+        results = classifica_sigma(row['codice'], str(row['data_inizio'].year))
+
+        if results is not None:
+            if row['status'] != results[1]:
+                jj += 1
+
+            row['sigma'] = results[0]
+            row['status'] = results[1]
+            row['aggiornato'] = todayis
+            updates_DB_gara_row(row, conn)
+
+    print(f"{jj} righe sono state aggiornate")
 
 
-def update_DB_pagine_risultati(data, cod, conn):
-    data['disciplina'] = None
-    data['status'] = None
-    data['warn_spec'] = None
-    data['warn_gen'] = None
+def update_DB_pagine_gara(data, conn):
+    data[['disciplina', 'status', 'warn_gen', 'warn_spec', 'status',
+          'scraped_iscr', 'scraped_start', 'scraped_ris']] = None
+    
+    # Prende i link che ci sono ora
+    query1 = f"SELECT * FROM pagine_gara WHERE codice = '{data.loc[0, 'codice']}'"
+    gare_old = pd.read_sql(query1, conn)
 
-    # Conta quanti link ci sono ora
-    query1 = f"SELECT * FROM pagine_risultati WHERE codice = '{cod}'"
-    num_old_links = len(pd.read_sql(query1, conn))
-
-    # Elimina i link che ci sono ora
-    query2 = text("DELETE FROM pagine_risultati WHERE codice = :cod")
-    conn.execute(query2, {"cod": cod})
+    # Li toglie da quelli nuovi
+    new_data = data[~data['gara'].isin(gare_old['gara'])]
 
     # Inserisci i link nuovi
-    data.to_sql('pagine_risultati', conn, if_exists='append', index=False)
+    new_data.to_sql("pagine_gara", conn, if_exists='append', index=False)
 
     # Aggiorna gare per ricordare la data in cui questa gara e stata screpata
-    query3 = text("UPDATE gare SET scraped = CURRENT_TIMESTAMP WHERE codice = :cod")
-    conn.execute(query3 , {"cod": cod})
+    # Controlliamo se ci sono anche risultati
+    query3 = None
+    for gara in data['gara']:
+        match1 = re.match(r"Gara\d{3}\.htm", gara)
+        match2 = re.match(r"Diffr.*\.htm", gara)
+        if match1 or match2:
+            query3 = text(f"""UPDATE gare SET
+                          status = 'risultati',
+                          scraped_iscritti = CURRENT_TIMESTAMP,
+                          scraped_risultati = CURRENT_TIMESTAMP
+                          WHERE codice = :cod""")
+            continue
+    if query3 is None:
+        query3 = text(f"""UPDATE gare SET
+                      status = 'iscritti',
+                      scraped_iscritti = CURRENT_TIMESTAMP
+                      WHERE codice = :cod""")
+
+    conn.execute(query3 , {"cod": data.loc[0, 'codice']})
 
     conn.commit()
 
-    return len(data) - num_old_links
+    return len(new_data)
 
 
-def get_events_link_sigma_nuovo(row, conn):
+def link_sigma_nuovo(row, conn):
     """
     Usata da get_events_link()
+    https://www.fidal.it/risultati/2025/REG38222/Risultati/IndexRisultatiPerGara.html
     """
-    cod = row['codice']
-    url = row['link_risultati']
     if row['tipologia'] == 'indoor':
         ambiente = 'I'
     elif row['tipologia'] in ('outdoor', 'pista', 'piazza e altri ambiti'):
@@ -373,43 +410,48 @@ def get_events_link_sigma_nuovo(row, conn):
         print(f"Non conosco la tipologia {row['tipologia']}")
         return 0
 
-    r = requests.get(url).text
-    soup = BeautifulSoup(r, 'html.parser')
-    elements = soup.find_all('a')
-    
-    data = pd.DataFrame(columns=['nome', 'link'])
-    for element in elements:
-        link = element['href']
-        
-        if link[0] == '#': continue
+    cod = row['codice']
+    anno = row['data_inizio'].year
+    urls = [f"{DOMAIN}{anno:d}/{cod}/Iscrizioni/IndexPerGara.html"]
+    if row['status'] == 'risultati':
+        urls.append(f"{DOMAIN}{anno}/{cod}/Risultati/IndexRisultatiPerGara.html")
 
-        nome = element.text.strip()
-        link = url[:-26] + link
-        nome = nome[:500] # Tronca se troppo lunghi
-        link = link[:500] # Tronca se troppo lunghi
-        data.loc[len(data)] = [nome, link]
+    data = pd.DataFrame(columns=['nome', 'gara'])
+    for url in urls:
+        r = requests.get(url).text
+        els = BeautifulSoup(r, 'html.parser').find_all('a', class_='link-style')
+        
+        for el in els:
+            link = el['href'][:50]
+            if link[0] == '#': continue
+
+            nome = el.text.strip()[:500]
+            data.loc[len(data)] = [nome, link]
                                 
     if len(data) == 0:
-        print(f"Link vuoto: {url}")
-        conn.execute(text("UPDATE gare SET scraped = CURRENT_TIMESTAMP WHERE codice = :cod"), {"cod": cod})
+        print(f"Link vuoto: {urls[0]}")
+        query = text(f"""
+                     UPDATE gare SET
+                     scraped_iscritti = CURRENT_TIMESTAMP,
+                     status = NULL
+                     WHERE codice = '{cod}'""")
+        conn.execute(query)
         conn.commit()
         return 0
     else:
+        data['anno'] = anno
         data['codice'] = cod
-        data['sigma'] = 'Nuovo'
+        data['sigma'] = 'nuovo'
         data['ambiente'] = ambiente
 
-        return update_DB_pagine_risultati(data, cod, conn)
+        return update_DB_pagine_gara(data, conn)
     
 
-def get_events_link_sigma_vecchio(row, conn):
+def link_risultati_sigma_vecchio(row, conn):
     """
     Usata da get_events_link()
     """
-    cod = row[0]
-    url = row[1]
-    tipologia = row[2]
-
+    tipologia = row['tipologia']
     if tipologia == 'indoor':
         ambiente = 'I'
     elif tipologia in ('outdoor', 'pista', 'piazza e altri ambiti'):
@@ -418,108 +460,129 @@ def get_events_link_sigma_vecchio(row, conn):
         print(f"Non conosco la tipologia {tipologia}")
         return 0
 
-    r = requests.get(url).text
-    soup = BeautifulSoup(r, 'html.parser')
-    elements = soup.find_all('td', id='idx_colonna1')
+    cod = row['codice']
+    anno = row['data_inizio'].year
+    link = f"{DOMAIN}{anno:d}/{cod}/RESULTSBYEVENT"
 
-    data = pd.DataFrame(columns=['nome', 'link'])
-    for element in elements:
-        a_tag = element.find('a')
-        if a_tag:
-            link = a_tag['href']
-            link = url[:url.rfind('/')] + '/' + link
-            nome = a_tag.get_text(strip=True)
-            nome = nome[:500] # Tronca se troppo lunghi
-            link = link[:500] # Tronca se troppo lunghi
-            data.loc[len(data)] = [nome, link]
+    # Con il sigma vecchio posso avere N pagine di risultati.
+    # La cella si chiama quindi 'Sigma vecchio #N'
+    N = int(row['sigma'].split('#')[1])
+    # Creo un link per ognuna di queste pagine
+    urls = []
+    for jj in range(1, N+1):
+        url = f"{link}{jj:d}.htm"
+        urls.append(url)
+        if row['status'] == 'risultati':
+            urls.append(url.replace('RESULTS', 'ENTRYLIST'))
+
+    data = pd.DataFrame(columns=['nome', 'gara'])
+    for url in urls:
+        r = requests.get(url).text
+        soup = BeautifulSoup(r, 'html.parser')
+        elements = soup.find_all('td', id='idx_colonna1')
+
+        for element in elements:
+            a_tag = element.find('a')
+            if a_tag:
+                gara = a_tag['href'][:50]
+                nome = a_tag.get_text(strip=True)[:500]
+                data.loc[len(data)] = [nome, gara]
+
     if len(data) == 0:
-        print(f"Link vuoto: {url}")
-        conn.execute(text("UPDATE gare SET scraped = CURRENT_TIMESTAMP WHERE codice = :cod"), {"cod": cod})
+        print(f"Link vuoto: {urls[0]}")
+        query = text(f"""
+                     UPDATE gare SET
+                     scraped_iscritti = CURRENT_TIMESTAMP,
+                     status = NULL
+                     WHERE codice = '{cod}'""")
+        conn.execute(query)
         conn.commit()
         return 0
+
     else:
+        data['anno'] = anno
         data['codice'] = cod
-        data['sigma'] = 'Vecchio'
+        data['sigma'] = 'vecchio'
         data['ambiente'] = ambiente
 
-        return update_DB_pagine_risultati(data, cod, conn)
+        return update_DB_pagine_gara(data, conn)
 
 
-def get_events_link_sigma_vecchissimo(row, conn):
+def link_risultati_sigma_vecchissimo(row, conn):
     """
     Usata da get_events_link()
     """
-    cod = row['codice']
-    url = row['link_risultati']
-    if row['tipologia'] == 'indoor':
+    tipologia = row['tipologia']
+    if tipologia == 'indoor':
         ambiente = 'I'
-    elif row['tipologia'] in ('outdoor', 'pista', 'piazza e altri ambiti'):
+    elif tipologia in ('outdoor', 'pista', 'piazza e altri ambiti'):
         ambiente = 'P'
     else:
         print(f"Non conosco la tipologia {row['tipologia']}")
         return 0
 
+    cod = row['codice']
+    anno = row['data_inizio'].year
+    url = f"{DOMAIN}{anno:d}/{cod}/Index.htm"
+
     r = requests.get(url).text
     soup = BeautifulSoup(r, 'html.parser')
-    elements = soup.find_all('a') # class_='idx_link' non dovrebbe servire
+    elements = soup.find_all('a', class_='idx_link')
     
-    data = pd.DataFrame(columns=['nome', 'link'])
+    data = pd.DataFrame(columns=['nome', 'gara'])
     for element in elements:
-        link = element['href']
+        gara = element['href'][:50]
 
-        if len(link) < 5: continue # gli iscritti hanno il link con la L prima del numero
-        if link[4] == 'L': continue # gli iscritti hanno il link con la L prima del numero
-
-        link = url[:-9] + link
-        nome = element.text.strip()
-        nome = nome[:500] # Tronca se troppo lunghi
-        link = link[:500] # Tronca se troppo lunghi
-        data.loc[len(data)] = [nome, link]
+        nome = element.text.strip()[:500]
+        data.loc[len(data)] = [nome, gara]
                                 
     if len(data) == 0:
         print(f"Link vuoto: {url}")
-        conn.execute(text("UPDATE gare SET scraped = CURRENT_TIMESTAMP WHERE codice = :cod"), {"cod": cod})
+        query = text(f"""
+                     UPDATE gare SET
+                     scraped_iscritti = CURRENT_TIMESTAMP,
+                     status = NULL
+                     WHERE codice = '{cod}'""")
+        conn.execute(query)
         conn.commit()
         return 0
     else:
+        data['anno'] = anno
         data['codice'] = cod
-        data['sigma'] = 'Vecchissimo'
+        data['sigma'] = 'vecchissimo'
         data['ambiente'] = ambiente
 
-        return update_DB_pagine_risultati(data, cod, conn)
+        return update_DB_pagine_gara(data, conn)
 
 
 def get_events_link(conn, update_condition, where_clause=''):
     """
-    Cerca i link ai risultati di ogni gara presente link_risultati
-    es. per sigma Vecchisssimo, Vecchio #1, Vecchio #3 e Nuovo
-    https://www.fidal.it/risultati/2025/REG37891/Index.htm
-    https://www.fidal.it/risultati/2020/REG22800/RESULTSBYEVENT1.htm
-    https://www.fidal.it/risultati/2022/REG28833/RESULTSBYEVENT1.htm
+    Cerca i link a iscritti/turni iniziali/risultati delle gare della tabella
+    gare. Pagine gare di esempio per sigma vecchissimo, vecchio e nuovo
+    https://www.fidal.it/risultati/2025/REG37891/Index.htm standard
+    https://www.fidal.it/risultati/2011/REG1806/Index.htm con Diffr
+    https://www.fidal.it/risultati/2020/REG22800/RESULTSBYEVENT1.htm 1 pagina
+    https://www.fidal.it/risultati/2022/REG28833/RESULTSBYEVENT1.htm 3 pagine
     https://www.fidal.it/risultati/2025/REG38222/Risultati/IndexRisultatiPerGara.html
 
     Salva anche il nome con cui compare quella disciplina.
     
-    conn:            connessione al database
-    update_condition: 'ok' per cotrollare tutte le gare con status 'ok'
-                     'date_N' per controllare solo le gare svolte da N giorni
-                     'scrape_M' per controllare le gare non controllate da più
-                                di M minuti
-                     'custom' usa la where_clause in input
+    conn:             connessione al database
+    update_condition: 'date_N'    per controllare solo le gare svolte da N giorni
+                      'scrape_M'  per controllare le gare non controllate da più
+                                  di M minuti
+                      'all'       per controllare tutto il database (non NULL)
+                      'custom'    usa la where_clause in input
     """
-    
+
     num_new_rows = 0
     todayis = datetime.today().date()
     
-    if update_condition == 'ok':
-        print('Aggiorno tutti i link con status = \'ok\'')
-        where_clause = "WHERE status = 'ok'"
-        
-    elif update_condition.startswith('date_'):
+    if update_condition.startswith('date_'):
         time_span = int(update_condition.split('_')[1]) # quanti giorni dopo la gara continuo a cercare risultati
-        print('Aggiorno tutti i link delle gare finite da al massimo ' + str(time_span) + ' giorni')
+        print('Controllo gare finite da al massimo ' + str(time_span) + ' giorni')
         where_clause = f"""
-                WHERE status = 'ok'
+                WHERE status is not null
                 AND data_fine BETWEEN
                     DATE '{todayis}' - INTERVAL '{time_span} days'
                     AND DATE '{todayis}'
@@ -527,19 +590,25 @@ def get_events_link(conn, update_condition, where_clause=''):
 
     elif update_condition.startswith('scrape_'):
         minutes = int(update_condition.split('_')[1])  # quanti minuti fa è stato fatto lo scraping
-        print(f"Aggiorno tutte le gare non controllate da più di {minutes} minuti")
+        print(f"Controllo gare non controllate da più di {minutes} minuti")
 
         where_clause = f"""
-            WHERE status = 'ok'
+            WHERE status is not null
             AND (
-                scraped IS NULL OR
-                scraped < (CURRENT_TIMESTAMP - INTERVAL '{minutes} minutes')
+                scraped_risultati IS NULL OR
+                scraped_risultati < (CURRENT_TIMESTAMP - INTERVAL '{minutes} minutes')
             )
         """
 
-        
+    elif update_condition == 'all':
+        print("Controllo tutto il database")
+        where_clause = 'where status is not null'
+
     elif update_condition == 'custom':
-        print("Uso:")
+        if where_clause == '':
+            print("where_clause vuota, se vuoi aggiornare tutto usa 'all'")
+            return
+        print("Controllo gare filtrate con:")
         print(where_clause)
 
     else:
@@ -550,14 +619,16 @@ def get_events_link(conn, update_condition, where_clause=''):
     query = f"SELECT * FROM gare {where_clause}"
     df_gare = pd.read_sql(query, conn)
 
-    print(f"Aggiorno i link di {len(df_gare)} gare")
 
     if df_gare.empty:
         print("Non ci sono gare da controllare")
         return
+    else:
+        print(f"Aggiorno i link di {len(df_gare)} gare")
+
 
     ## Link al sigma NUOVO
-    df_links_nuovi = df_gare[(df_gare['sigma'] == 'Nuovo')].reset_index(drop=True)
+    df_links_nuovi = df_gare[(df_gare['sigma'] == 'nuovo')].reset_index(drop=True)
     tot = str(len(df_links_nuovi))
 
     if int(tot) == 0:
@@ -568,36 +639,25 @@ def get_events_link(conn, update_condition, where_clause=''):
 
         for ii, row in df_links_nuovi.iterrows():
             print('\t' + str(ii+1) + '/' + tot, end="\r")
-            num_new_rows += get_events_link_sigma_nuovo(row, conn)
+            num_new_rows += link_sigma_nuovo(row, conn)
+
 
     ## Link al sigma VECCHIO 
-    df_vecchio = df_gare[df_gare['sigma'].str.contains('#')]
-    urls = []
-    for ii, row in df_vecchio.iterrows():
-        cod = row['codice']
-        link = row['link_risultati']
-
-        # Con il sigma vecchio posso avere N pagine di risultati.
-        # La cella si chiama quindi 'Sigma Vecchio #N'
-        N = int(row['sigma'].split('#')[1])
-        # Creo un link per ognuna di queste pagine
-        for jj in range(1, N+1):
-                link_jj = link[:-5]+str(jj)+link[-4:]
-                urls.append([cod, link_jj, row['tipologia']])
-
-    tot = str(len(urls))
+    df_vecchio = df_gare[df_gare['sigma'].str.startswith('vecchio')].reset_index(drop=True)
+    tot = str(len(df_vecchio))
     if int(tot) == 0:
         print('Non ci sono link al sigma vecchio da aggiornare')
 
     else:
         print('\nAnalizzo i link al sigma vecchio:\n')
 
-        for ii, row in enumerate(urls):
+        for ii, row in df_vecchio.iterrows():
             print('\t' + str(ii+1) + '/' + tot, end="\r")
-            num_new_rows += get_events_link_sigma_vecchio(row, conn)
+            num_new_rows += link_risultati_sigma_vecchio(row, conn)
+
 
     ## Link al sigma VECCHISSIMO
-    df_links_vecchissimi = df_gare[(df_gare['sigma'] == 'Vecchissimo')].reset_index(drop=True)
+    df_links_vecchissimi = df_gare[(df_gare['sigma'] == 'vecchissimo')].reset_index(drop=True)
     
     tot = str(len(df_links_vecchissimi))
     if int(tot) == 0:
@@ -608,7 +668,7 @@ def get_events_link(conn, update_condition, where_clause=''):
     
         for ii, row in df_links_vecchissimi.iterrows():
             print('\t' + str(ii+1) + '/' + tot, end="\r")
-            num_new_rows += get_events_link_sigma_vecchissimo(row, conn)
+            num_new_rows += link_risultati_sigma_vecchissimo(row, conn)
 
     print(f"{num_new_rows} where added")
 

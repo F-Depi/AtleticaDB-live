@@ -17,15 +17,12 @@ for tipo in ['3', '5', '10']:
     update_gare_database(str(anno), mese, regione, categoria, tipo)
 
 
+
 """ Aggiorna le informazioni sulle gare """
 print('\n---------------------------------------------')
 print("Ottengo informazioni su ogni gara")
 
-update_condition = 'null' # righe appena aggiunte
-with get_db_engine().connect() as conn:
-    get_meet_info(conn, update_condition)
-
-update_condition = 'date_0' # routine update
+update_condition = 'date_7' # routine update
 with get_db_engine().connect() as conn:
     get_meet_info(conn, update_condition)
 
@@ -41,11 +38,12 @@ with get_db_engine().connect() as conn:
 print('\n---------------------------------------------')
 print("Ora cerco i link agli eventi di ogni gara")
 
-update_condition = 'date_0'
-#update_condition = 'ok'
-#update_condition = 'scrape_60'
+update_condition = 'date_7'
+update_condition = 'scrape_60'
 with get_db_engine().connect() as conn:
     get_events_link(conn, update_condition)
+exit()
+
 
 
 """ Identifichiamo la disciplina corretta con il dizionari dei nomi """
