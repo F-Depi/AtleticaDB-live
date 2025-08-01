@@ -424,6 +424,7 @@ def link_sigma_nuovo(row, conn):
         for el in els:
             link = el['href'][:50]
             if link[0] == '#': continue
+            if link.startswith('http'): continue
 
             nome = el.text.strip()[:500]
             data.loc[len(data)] = [nome, link]
@@ -485,6 +486,7 @@ def link_risultati_sigma_vecchio(row, conn):
             a_tag = element.find('a')
             if a_tag:
                 gara = a_tag['href'][:50]
+                if gara.startswith('http'): continue
                 nome = a_tag.get_text(strip=True)[:500]
                 data.loc[len(data)] = [nome, gara]
 
@@ -532,6 +534,7 @@ def link_risultati_sigma_vecchissimo(row, conn):
     data = pd.DataFrame(columns=['nome', 'gara'])
     for element in elements:
         gara = element['href'][:50]
+        if gara.startswith('http'): continue
 
         nome = element.text.strip()[:500]
         data.loc[len(data)] = [nome, gara]
@@ -1426,7 +1429,6 @@ def assegna_evento_sigma_nuovo(row, conn):
     except:
         print("Qualcosa è andato storto:", url)
         return
-
 
 
 def assegna_evento(conn, update_contidion, where_clause=''):
