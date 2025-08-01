@@ -3,6 +3,203 @@ import pandas as pd
 import re
 from bs4 import BeautifulSoup
 from datetime import datetime
+from func_general import DOMAIN
+from sqlalchemy import text
+from io import StringIO
+
+
+def iscritti_staffetta_sigma_nuovo(iscritti, url):
+
+    tot = int(len(iscritti) / 3)
+    df = pd.DataFrame(index=range(tot),
+        columns=['bib', 'atleta', 'anno', 'categoria', 'club', 'SB', 'PB', 'link_atleta'])
+
+    j = 0
+    for i, row in enumerate(iscritti):
+        if i % 3 == 0:
+            tds = row.find_all('td')
+            bib = tds[0].text.strip()
+            nome = tds[1].text.strip()
+            categoria = tds[2].text.strip()
+            club = tds[3].text.strip()
+            SB = tds[4].text.strip()
+            if len(tds) > 5:
+                PB = tds[5].text.strip()
+        if (i - 2) % 3 == 0:
+            for a in row.find_all('a'):
+                df.loc[j, 'bib'] = bib
+                df.loc[j, 'categoria'] = categoria
+                df.loc[j, 'club'] = club
+                df.loc[j, 'SB'] = SB
+                if len(tds) > 5:
+                    df.loc[j, 'PB'] = PB
+                df.loc[j, 'atleta'] = a.text.strip()
+                df.loc[j, 'link_atleta'] = a.get("href")
+
+                j += 1
+    
+    return df
+
+
+def iscritti_sigma_nuovo(anno, codice, gara, conn):
+    """
+    Estrae i dati degli iscritti da una pagina SIGMA e salva nel database solo
+    i nuovi atleti.
+
+    url: URL della pagina SIGMA con la tabella iscritti
+    conn: Connessione al database data da fun_general.get_db_engine()
+    """
+    # Richiesta
+    url = f"{DOMAIN}{anno}/{codice}/Iscrizioni/{gara}"
+    r = requests.get(url)
+    if r.status_code != 200:
+        print("\nPagina non esistente", url)
+        return 0 
+
+    # Trova la tabella
+    soup = BeautifulSoup(r.text, "html.parser")
+    tables = soup.find_all('table', {'class': 'table table-striped table-sm table-bordered h6-7'})
+    if len(tables) != 1:
+        print(f"\nHo {len(tables)} tabelle: {url}")
+        return 0
+
+    table = tables[0]
+    rows = table.find_all('tr')
+    if len(rows) < 3:
+        print("\nNon ci sono iscritti", url)
+        return 0
+
+    # Dati sugli iscritti
+    iscritti = rows[1:-1]
+    tot = len(iscritti)
+    tot_check = int(rows[-1].find('td').text.strip().split(':')[-1].strip())
+
+    if tot == 3 * tot_check: # cose strane, le staffette hanno righe in più
+        df = iscritti_staffetta_sigma_nuovo(iscritti, url)
+
+    elif tot != tot_check:
+        print("\nERROR: Numero iscritti non confermato:"
+              f"df={tot} vs tot={tot_check}")
+        print(" "*8, url)
+        return 0
+
+    else:
+        df = pd.DataFrame(index=range(tot),
+            columns=['bib', 'atleta', 'anno', 'categoria', 'club', 'SB', 'PB', 'link_atleta'])
+
+        for i, tr in enumerate(iscritti):
+            for j, td in enumerate(tr.find_all('td')):
+                df.iloc[i, j] = td.text.strip()
+                if j == 1 and td.find('a'):
+                    df.iloc[i, 7] = td.find('a').get("href")
+    
+    # Scrivi sul database
+    try:
+        df['codice'] = codice
+        df['gara'] = gara
+        query1 = text(f"""SELECT * FROM iscritti
+                      WHERE codice = :codice
+                      AND gara = :gara
+                      """)
+        df_old = pd.read_sql(query1, conn, params={"codice": codice, "gara": gara}) 
+
+        df_new = df[~df['atleta'].isin(df_old['atleta'])]
+        df_new.to_sql('iscritti', conn, if_exists='append', index=False)
+
+        query2 = text(f"""
+                          UPDATE pagine_gara
+                          SET scraped_iscr = CURRENT_TIMESTAMP
+                          WHERE codice = '{codice}'
+                          AND gara = '{gara}'
+                       """)
+        conn.execute(query2)
+        conn.commit()
+
+        conn.commit()
+    except Exception as e:
+        print(f"\nError: {e}")
+        print(f"URL: {url}")
+        return None
+
+    return len(df_new)
+
+
+def iscritti_sigma_vecchio(anno, codice, gara, conn):
+
+    # Richiesta
+    url = f"{DOMAIN}{anno}/{codice}/{gara}"
+    r = requests.get(url)
+    if r.status_code != 200:
+        print("\nPagina non esistente", url)
+        return 0 
+
+    # Trova la tabella
+    soup = BeautifulSoup(r.text, "html.parser")
+    tables = soup.find_all('table')
+    if len(tables) < 8:
+        print(f"\nHo {len(tables)} tabelle: {url}")
+        return 0
+
+    table = tables[7]
+    rows = table.find_all('tr')
+    if len(rows) < 3:
+        print("\nNon ci sono iscritti", url)
+        return 0
+
+    # Dati sugli iscritti
+    iscritti = rows[1:-2]
+    tot_check = int(rows[-1].find('td').text.strip().split(':')[-1].strip())
+
+    df = pd.DataFrame(index=range(2*tot_check),
+        columns=['bib', 'atleta', 'anno', 'categoria', 'club', 'SB'])
+
+    for i, tr in enumerate(iscritti):
+        for j, td in enumerate(tr.find_all('td')):
+            df.iloc[i, j] = td.text.strip()
+
+    df = df[(df['atleta'] != '') & (~df['atleta'].isna())]
+    print(df)
+
+    tot = len(df)
+    if tot != tot_check:
+        print("\nERROR: Numero iscritti non confermato:"
+              f"df={tot} vs tot={tot_check}")
+        print(" "*8, url)
+        return 0
+
+    return 
+
+def get_iscritti(conn, update_condition, where_clause=''):
+
+    where_clause = """WHERE EXTRACT(YEAR FROM data_inizio) = 2025
+                      AND status IS NOT NULL
+                      AND sigma = 'nuovo'
+                      """
+    query_cod = f"SELECT codice FROM gare {where_clause}"
+    df_cod = pd.read_sql(query_cod, conn).reset_index(drop=True)
+
+    added = 0
+    tot = len(df_cod)
+    ii = 0
+    for cod in df_cod['codice']:
+        print(f"\t{ii:d}/{tot:d}", end="\r"); ii += 1
+        query_gara = text(f"""
+                        SELECT anno, gara FROM pagine_gara
+                        WHERE codice = '{cod}'
+                        AND gara LIKE 'GaraL%'
+                        AND scraped_iscr IS NULL
+                     """)
+        df_gara = pd.read_sql(query_gara, conn)
+        if df_gara.empty: continue
+        added += df_gara.apply(
+            lambda row: iscritti_sigma_nuovo(row['anno'], cod, row['gara'], conn), 
+            axis=1
+        ).sum()
+
+    print(added)
+
+     
+
 
 def luogo_data_batteria(date_str):
     ## l'input è del tipo 'PHOTOFINISHPalaCasali Ancona - 4 gen 2024 - 11:51'

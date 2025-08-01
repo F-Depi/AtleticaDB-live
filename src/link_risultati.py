@@ -1,4 +1,3 @@
-from sqlalchemy import update
 from func_general import update_gare_database, get_meet_info, get_events_link, get_db_engine, assegna_evento
 
 import time
