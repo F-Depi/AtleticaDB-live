@@ -346,17 +346,33 @@ def cerca_risultati_gara(row, conn):
     # Le informazioni più importanti che abbiamo per identificare la gara
     # sono 'data_inizio', 'data_fine' e 'luogo' in row
 
-    query = text("""
+    query1 = text(f"SELECT * FROM iscritti WHERE codice = '{row['codice']}'")
+    df_iscritti = pd.read_sql(query1, conn)
+
+    if df_iscritti.empty:
+        return
+
+    luogo = row['luogo'].replace('--', '').strip() # Citta straniere hanno --
+    query2 = text("""
             SELECT * FROM results
             WHERE data BETWEEN :inizio AND :fine
             AND :luogo LIKE '%' || luogo || '%'
             """)
-    df = pd.read_sql(query, conn, params={'inizio': row['data_inizio'],
-                                          'fine': row['data_fine'],
-                                          'luogo': row['luogo'].replace('--','').strip()})
-    print(row)
-    print(df)
-    exit()
+    df_results = pd.read_sql(query2, conn, params={'inizio': row['data_inizio'],
+                                                  'fine': row['data_fine'],
+                                                  'luogo': luogo})
+
+    
+    df_unknown = df_results[~df_results['atleta'].isin(df_iscritti['atleta'])]
+
+    a = len(df_iscritti)
+    b = len(df_unknown)
+    c = len(df_results)
+    if c == 0:
+        print(f"{a}: NESSUN RISULTATO\t\t{row['nome']}")
+    else:
+        print(f"{a}:\t{b}\t{c}\t{b / c * 100:.1f}%\t{row['nome']}")
+        print(df_unknown[['atleta', 'prestazione', 'disciplina', 'luogo', 'data']])
 
 
 def gare_in_DB(conn, update_condition, where_clause=''):
@@ -389,6 +405,7 @@ def gare_in_DB(conn, update_condition, where_clause=''):
         where_clause = f""" WHERE 
             data_fine BETWEEN DATE '{start_date}' AND DATE '{todayis}'
             AND not in_DB
+            ORDER by data_fine asc
         """
 
     elif update_condition == 'custom':
