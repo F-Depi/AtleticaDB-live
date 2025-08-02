@@ -41,7 +41,7 @@ def iscritti_staffetta_sigma_nuovo(iscritti, url):
     return df
 
 
-def iscritti_sigma_nuovo(anno, codice, gara, conn):
+def iscritti_sigma_nuovo(anno, codice, gara) -> pd.DataFrame | None:
     """
     Estrae i dati degli iscritti da una pagina SIGMA e salva nel database solo
     i nuovi atleti.
@@ -54,20 +54,20 @@ def iscritti_sigma_nuovo(anno, codice, gara, conn):
     r = requests.get(url)
     if r.status_code != 200:
         print("\nPagina non esistente", url)
-        return 0 
+        return None 
 
     # Trova la tabella
     soup = BeautifulSoup(r.text, "html.parser")
     tables = soup.find_all('table', {'class': 'table table-striped table-sm table-bordered h6-7'})
     if len(tables) != 1:
         print(f"\nHo {len(tables)} tabelle: {url}")
-        return 0
+        return None
 
     table = tables[0]
     rows = table.find_all('tr')
     if len(rows) < 3:
         print("\nNon ci sono iscritti", url)
-        return 0
+        return None
 
     # Dati sugli iscritti
     iscritti = rows[1:-1]
@@ -81,7 +81,7 @@ def iscritti_sigma_nuovo(anno, codice, gara, conn):
         print("\nERROR: Numero iscritti non confermato:"
               f"df={tot} vs tot={tot_check}")
         print(" "*8, url)
-        return 0
+        return None
 
     else:
         df = pd.DataFrame(index=range(tot),
@@ -93,6 +93,110 @@ def iscritti_sigma_nuovo(anno, codice, gara, conn):
                 if j == 1 and td.find('a'):
                     df.iloc[i, 7] = td.find('a').get("href")
     
+    return df
+
+
+def iscritti_sigma_vecchio(anno, codice, gara, sigma) -> pd.DataFrame | None:
+
+    # Richiesta
+    url = f"{DOMAIN}{anno}/{codice}/{gara}"
+    r = requests.get(url)
+    if r.status_code != 200:
+        print("\nPagina non esistente", url)
+        return None 
+
+    # Trova la tabella giusta in base al sigma
+    soup = BeautifulSoup(r.text, "html.parser")
+    tables = soup.find_all('table')
+
+    if sigma == 'vecchio':
+        if len(tables) < 8:
+            print(f"\nHo {len(tables)} tabelle: {url}")
+            return None
+        table = tables[7]
+    elif sigma == 'vecchissimo':
+        if len(tables) < 6:
+            print(f"\nHo {len(tables)} tabelle: {url}")
+            return None
+        table = tables[5]
+    else:
+        print("sigma è vecchio o vecchissimo. sigma =", sigma)
+        return None
+
+    rows = table.find_all('tr')
+    if len(rows) < 3:
+        print("\nNon ci sono iscritti", url)
+        return None
+
+    # Dati sugli iscritti
+    iscritti = rows[1:-2]
+    tot_check = int(rows[-1].find('td').text.strip().split(':')[-1].strip())
+
+    df = pd.DataFrame(index=range(2*tot_check),
+        columns=['bib', 'atleta', 'anno', 'categoria', 'club', 'SB'])
+
+    for i, tr in enumerate(iscritti):
+        for j, td in enumerate(tr.find_all('td')):
+            df.iloc[i, j] = td.text.strip()
+
+    df = df[(df['atleta'] != '') & (~df['atleta'].isna())]
+
+    # Controlla se è una staffetta
+    tot = len(df)
+    if tot == 2 * tot_check or gara.startswith('Staff'): 
+        df_staff = pd.DataFrame(index=range(10*tot_check),
+                 columns=['bib', 'atleta', 'anno', 'categoria', 'club', 'SB'])
+        jj = 0
+        for ii, row in df.iterrows():
+            if ii % 2 == 0:
+                bib = row['bib']
+                club = row['atleta']
+            else:
+                if '-' not in row['atleta']:
+                    continue
+                for name in row['atleta'].split('-'):
+                    atleta = name.strip()[:-4]
+                    anno = name.strip()[-4:]
+                    df_staff.loc[jj, 'bib'] = bib
+                    df_staff.loc[jj, 'atleta'] = atleta
+                    df_staff.loc[jj, 'anno'] = anno
+                    df_staff.loc[jj, 'club'] = club
+
+                    jj += 1
+        
+        if df_staff.empty:
+            print("Staffetta senza atleti:", url)
+            return None
+        df = df_staff
+        tot /= 2
+
+    # Controlla se ci sono stati altri problemi
+    if tot != tot_check:
+        print("\nERROR: Numero iscritti non confermato:"
+              f"df={tot} vs tot={tot_check}")
+        print(" "*8, url)
+        return None
+
+    return df
+
+
+def iscritti_per_evento(anno, codice, gara, sigma, conn):
+
+    if sigma == 'nuovo':
+        df = iscritti_sigma_nuovo(anno, codice, gara)
+        url = f"{DOMAIN}{anno}/{codice}/Iscrizioni/{gara}"
+
+    elif sigma in ('vecchio', 'vecchissimo'):
+        df = iscritti_sigma_vecchio(anno, codice, gara, sigma)
+        url = f"{DOMAIN}{anno}/{codice}/{gara}"
+
+    else:
+        print("sigma è nuovo, vecchio o vecchissimo. sigma =", sigma)
+        return 0
+        
+    if df is None:
+        return 0
+
     # Scrivi sul database
     try:
         df['codice'] = codice
@@ -119,61 +223,16 @@ def iscritti_sigma_nuovo(anno, codice, gara, conn):
     except Exception as e:
         print(f"\nError: {e}")
         print(f"URL: {url}")
-        return None
+        print(df)
+        exit()
 
     return len(df_new)
 
-
-def iscritti_sigma_vecchio(anno, codice, gara, conn):
-
-    # Richiesta
-    url = f"{DOMAIN}{anno}/{codice}/{gara}"
-    r = requests.get(url)
-    if r.status_code != 200:
-        print("\nPagina non esistente", url)
-        return 0 
-
-    # Trova la tabella
-    soup = BeautifulSoup(r.text, "html.parser")
-    tables = soup.find_all('table')
-    if len(tables) < 8:
-        print(f"\nHo {len(tables)} tabelle: {url}")
-        return 0
-
-    table = tables[7]
-    rows = table.find_all('tr')
-    if len(rows) < 3:
-        print("\nNon ci sono iscritti", url)
-        return 0
-
-    # Dati sugli iscritti
-    iscritti = rows[1:-2]
-    tot_check = int(rows[-1].find('td').text.strip().split(':')[-1].strip())
-
-    df = pd.DataFrame(index=range(2*tot_check),
-        columns=['bib', 'atleta', 'anno', 'categoria', 'club', 'SB'])
-
-    for i, tr in enumerate(iscritti):
-        for j, td in enumerate(tr.find_all('td')):
-            df.iloc[i, j] = td.text.strip()
-
-    df = df[(df['atleta'] != '') & (~df['atleta'].isna())]
-    print(df)
-
-    tot = len(df)
-    if tot != tot_check:
-        print("\nERROR: Numero iscritti non confermato:"
-              f"df={tot} vs tot={tot_check}")
-        print(" "*8, url)
-        return 0
-
-    return 
 
 def get_iscritti(conn, update_condition, where_clause=''):
 
     where_clause = """WHERE EXTRACT(YEAR FROM data_inizio) = 2025
                       AND status IS NOT NULL
-                      AND sigma = 'nuovo'
                       """
     query_cod = f"SELECT codice FROM gare {where_clause}"
     df_cod = pd.read_sql(query_cod, conn).reset_index(drop=True)
@@ -184,21 +243,18 @@ def get_iscritti(conn, update_condition, where_clause=''):
     for cod in df_cod['codice']:
         print(f"\t{ii:d}/{tot:d}", end="\r"); ii += 1
         query_gara = text(f"""
-                        SELECT anno, gara FROM pagine_gara
+                        SELECT anno, gara, sigma FROM pagine_gara
                         WHERE codice = '{cod}'
-                        AND gara LIKE 'GaraL%'
+                        AND (gara LIKE 'GaraL%' OR gara LIKE 'Staff%')
                         AND scraped_iscr IS NULL
                      """)
         df_gara = pd.read_sql(query_gara, conn)
         if df_gara.empty: continue
         added += df_gara.apply(
-            lambda row: iscritti_sigma_nuovo(row['anno'], cod, row['gara'], conn), 
+            lambda row: iscritti_per_evento(row['anno'], cod, row['gara'],
+                                            row['sigma'], conn), 
             axis=1
         ).sum()
-
-    print(added)
-
-     
 
 
 def luogo_data_batteria(date_str):
