@@ -1,4 +1,5 @@
 import requests
+from datetime import timedelta, datetime
 import pandas as pd
 import re
 from bs4 import BeautifulSoup
@@ -9,6 +10,17 @@ from io import StringIO
 
 
 def iscritti_staffetta_sigma_nuovo(iscritti, url):
+    """
+        Estrae i dati degli iscritti alle staffette dalla tabella SIGMA (versione nuova)
+    e li organizza in un DataFrame Pandas.
+    
+    Parametri:
+        iscritti (list): Lista delle righe HTML corrispondenti agli iscritti.
+        url (str): URL della pagina da cui si stanno estraendo i dati.
+
+    Restituisce:
+        pd.DataFrame: DataFrame con i dati degli atleti iscritti alla staffetta.
+    """
 
     tot = int(len(iscritti) / 3)
     df = pd.DataFrame(index=range(tot),
@@ -43,11 +55,19 @@ def iscritti_staffetta_sigma_nuovo(iscritti, url):
 
 def iscritti_sigma_nuovo(anno, codice, gara) -> pd.DataFrame | None:
     """
-    Estrae i dati degli iscritti da una pagina SIGMA e salva nel database solo
-    i nuovi atleti.
+    Estrae i dati degli iscritti da una pagina SIGMA (versione nuova), gestendo
+    sia gare individuali che staffette. Restituisce un DataFrame con gli
+    iscritti.
 
-    url: URL della pagina SIGMA con la tabella iscritti
-    conn: Connessione al database data da fun_general.get_db_engine()
+    Parametri:
+        anno (str/int): Anno della gara.
+        codice (str): Codice della manifestazione.
+        gara (str): Codice gara.
+
+    Restituisce:
+        pd.DataFrame o None: DataFrame con i dati degli iscritti, oppure None in
+                             caso di errore.
+
     """
     # Richiesta
     url = f"{DOMAIN}{anno}/{codice}/Iscrizioni/{gara}"
@@ -97,6 +117,21 @@ def iscritti_sigma_nuovo(anno, codice, gara) -> pd.DataFrame | None:
 
 
 def iscritti_sigma_vecchio(anno, codice, gara, sigma) -> pd.DataFrame | None:
+    """
+    Estrae i dati degli iscritti da una pagina SIGMA (versione vecchia o
+    vecchissima). Gestisce sia gare individuali che staffette. Restituisce un
+    DataFrame con gli iscritti.
+
+    Parametri:
+        anno (str/int): Anno della gara.
+        codice (str): Codice della manifestazione.
+        gara (str): Codice gara.
+        sigma (str): Tipo di versione SIGMA ('vecchio' o 'vecchissimo').
+
+    Restituisce:
+        pd.DataFrame o None: DataFrame con i dati degli iscritti, oppure None
+                             in caso di errore.
+    """
 
     # Richiesta
     url = f"{DOMAIN}{anno}/{codice}/{gara}"
@@ -181,6 +216,21 @@ def iscritti_sigma_vecchio(anno, codice, gara, sigma) -> pd.DataFrame | None:
 
 
 def iscritti_per_evento(anno, codice, gara, sigma, conn):
+    """
+    Scarica ed estrae i dati degli iscritti per un evento (gara) specifico e
+    aggiorna il database solo con i nuovi atleti non ancora registrati per
+    quella gara.
+
+    Parametri:
+        anno (str/int): Anno della gara.
+        codice (str): Codice della manifestazione.
+        gara (str): Codice gara.
+        sigma (str): Tipo di versione SIGMA.
+        conn: Connessione al database.
+
+    Restituisce:
+        int: Numero di nuovi iscritti aggiunti al database.
+    """
 
     if sigma == 'nuovo':
         df = iscritti_sigma_nuovo(anno, codice, gara)
@@ -230,10 +280,44 @@ def iscritti_per_evento(anno, codice, gara, sigma, conn):
 
 
 def get_iscritti(conn, update_condition, where_clause=''):
+    """
+    Recupera e aggiorna il database degli iscritti alle varie gare,
+    estraendo i dati dove necessario e aggiungendo solo i nuovi atleti.
 
-    where_clause = """WHERE EXTRACT(YEAR FROM data_inizio) = 2025
-                      AND status IS NOT NULL
-                      """
+    Parametri:
+        conn: Connessione al database.
+        update_condition: Condizione da soddisfare per aggiornare (non utilizzata direttamente qui).
+        where_clause (str): Clausola WHERE SQL per filtrare le gare da aggiornare.
+
+    Restituisce:
+        None
+    """
+
+    todayis = datetime.today().date()
+
+    if update_condition.startswith('date_'):  
+        N = int(update_condition.split('_')[1]) # N giorni prima della gara
+        print(f"Controllo le gare finite da al massimo {N} giorni")
+
+        start_date = todayis - timedelta(days=N)
+        end_date = todayis + timedelta(days=N)
+        where_clause = f""" WHERE 
+            data_inizio BETWEEN DATE '{start_date}' AND DATE '{end_date}'
+            AND status IS NOT NULL
+            AND not in_db
+        """
+
+    elif update_condition == 'custom':
+        if where_clause == '':
+            print("where_clause vuota")
+            return
+        print("Uso:", where_clause)
+    else:
+        print("update_condition deve essere date_N dove N è il numero di giorni"
+              "passati dalla fine di una gara."
+              f"update_condition = {update_condition}")
+        return
+
     query_cod = f"SELECT codice FROM gare {where_clause}"
     df_cod = pd.read_sql(query_cod, conn).reset_index(drop=True)
 
@@ -257,6 +341,85 @@ def get_iscritti(conn, update_condition, where_clause=''):
         ).sum()
 
 
+def cerca_risultati_gara(row, conn):
+
+    # Le informazioni più importanti che abbiamo per identificare la gara
+    # sono 'data_inizio', 'data_fine' e 'luogo' in row
+
+    query = text("""
+            SELECT * FROM results
+            WHERE data BETWEEN :inizio AND :fine
+            AND :luogo LIKE '%' || luogo || '%'
+            """)
+    df = pd.read_sql(query, conn, params={'inizio': row['data_inizio'],
+                                          'fine': row['data_fine'],
+                                          'luogo': row['luogo'].replace('--','').strip()})
+    print(row)
+    print(df)
+    exit()
+
+
+def gare_in_DB(conn, update_condition, where_clause=''):
+    """
+    Controlla se almeno il 20% degli iscritti a una gara ha risultati
+    all'interno della tabella results del DB per inferire se i risultati della
+    gara sono stati inviati e inseriti nel DB FIDAL.
+    (Questo mi permette di togliere l'iscrizione dal profilo di un atleta poiché
+    comparirà già il risultato)
+    Probabilmente si può fare una grossa query direttamente in SQL che controlla
+    tutte le cose in parallelo unendo le colonne delle tabelle, ma sinceramente
+    non ne ho le competenze e credo che salteranno fuori così tante cose strane
+    che tanto vale andarci con i piedi di piompo e usare pandas.
+
+    Parametri:
+        conn: Connessione al database.
+
+    Restituisce:
+        None
+    """
+
+    todayis = datetime.today().date()
+
+    if update_condition.startswith('date_'):  # N giorni dopo la gara
+        N = int(update_condition.split('_')[1])  # days since the meet
+        print(f"Controllo le gare finite da al massimo {N} giorni")
+
+        start_date = todayis - timedelta(days=N)
+        # Make sure to use single quotes around dates in SQL, e.g. '2024-06-20'
+        where_clause = f""" WHERE 
+            data_fine BETWEEN DATE '{start_date}' AND DATE '{todayis}'
+            AND not in_DB
+        """
+
+    elif update_condition == 'custom':
+        if where_clause == '':
+            print("where_clause vuota")
+            return
+        print("Uso:", where_clause)
+
+    else:
+        print("update_condition deve essere date_N dove N è il numero di giorni"
+              "passati dalla fine di una gara."
+              f"update_condition = {update_condition}")
+        return
+
+    query = f"SELECT * FROM gare {where_clause}"
+    df = pd.read_sql(query, conn)
+
+    for i, row in df.iterrows():
+        cerca_risultati_gara(row, conn)
+
+
+
+
+
+
+
+
+
+
+
+# Old
 def luogo_data_batteria(date_str):
     ## l'input è del tipo 'PHOTOFINISHPalaCasali Ancona - 4 gen 2024 - 11:51'
     ## Gestisce anche cose del tipo 'Raul Guidobaldi - Indoor - 13 gen 2024 - 12:52'
