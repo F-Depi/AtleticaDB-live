@@ -352,7 +352,7 @@ def cerca_risultati_gara(row, conn):
     if df_iscritti.empty:
         return
 
-    luogo = row['luogo'].replace('--', '').strip() # Citta straniere hanno --
+    luogo = row['luogo'].replace('--', '').strip() # Citta' straniere hanno --
     query2 = text("""
             SELECT * FROM results
             WHERE data BETWEEN :inizio AND :fine
@@ -362,17 +362,60 @@ def cerca_risultati_gara(row, conn):
                                                   'fine': row['data_fine'],
                                                   'luogo': luogo})
 
+    if df_results.empty:
+        return
     
-    df_unknown = df_results[~df_results['atleta'].isin(df_iscritti['atleta'])]
+    # Nelle iscrizioni il nome può avere al massimo 23 caratteri
+    x = df_results['atleta'].str[:23].str.lower()
+    y = df_iscritti['atleta'].str[:23].str.lower()
+
+    # Risultati del DB che compaiono tra le iscrizioni
+    df_unknown = df_results[~x.isin(y)]
+
+    # Iscrizioni di cui compare un risultato nel DB
+    df_found = df_iscritti[y.isin(x)]
+
+    '''         Delle variabili che definisco ora:
+    perc_iscr_in_results:
+       % di iscritti di cui poi compare un risultato nel DB. Per % sopra al
+       20% posso decretare che i risultati della gara sono già stati caricati
+       nel DB. Perché una percentuale così bassa? Perché i risultati degli
+       esordienti non vengono caricati, quindi gare con eserdienti + ragazzi
+       hanno % molto basse
+    perc_results_not_in_iscr:
+       % di risultati del DB non presenti tra le iscrizioni, per % sotto al
+       10% posso stare tranquillo e assumere che tutti i risultati
+       appartengano a quella gara e gli atleti siano stati iscritti in loco.
+       Per % superiori è possibile che a quella data e luogo corrispondano 2
+       gare (una la mattia e una il pomeriggio, oppure una di una categoria e
+       una di un'altra), devo ancora decidere come gestire questa cosa.     '''
 
     a = len(df_iscritti)
     b = len(df_unknown)
     c = len(df_results)
-    if c == 0:
-        print(f"{a}: NESSUN RISULTATO\t\t{row['nome']}")
-    else:
-        print(f"{a}:\t{b}\t{c}\t{b / c * 100:.1f}%\t{row['nome']}")
-        print(df_unknown[['atleta', 'prestazione', 'disciplina', 'luogo', 'data']])
+    perc_iscr_in_results = len(df_found) / a * 100
+    #perc_results_not_in_iscr = b / c * 100
+    #print(f"{a} ({perc_iscr_in_results:.1f}%):\t{b}\t{c}\t{perc_results_not_in_iscr:.1f}%\t{row['link_gara']}")
+    #if perc_results_not_in_iscr > 5:
+    #    print(df_unknown[['prestazione', 'disciplina', 'atleta', 'link_atleta']])
+
+    # Per ora ci limitiamo a fare cosi'
+    if perc_iscr_in_results > 10:
+        query_gare = text(f"""UPDATE gare
+                          SET status = True
+                          WHERE codice = '{row['codice']}'""")
+        conn.execute(query_gare)
+
+    query_results = text(f"""UPDATE results
+                         SET guess_codice = array_append(guess_codice, :codice)
+                         WHERE data BETWEEN :inizio AND :fine
+                         AND :luogo LIKE '%' || luogo || '%'""")
+    conn.execute(query_results, {'codice': row['codice'],
+                                 'inizio': row['data_inizio'],
+                                 'fine': row['data_fine'],
+                                 'luogo': luogo})
+
+    conn.commit()
 
 
 def gare_in_DB(conn, update_condition, where_clause=''):
@@ -423,7 +466,9 @@ def gare_in_DB(conn, update_condition, where_clause=''):
     query = f"SELECT * FROM gare {where_clause}"
     df = pd.read_sql(query, conn)
 
+    tot = len(df)
     for i, row in df.iterrows():
+        print(f"\t{i+1:d}/{tot:d}", end="\r")
         cerca_risultati_gara(row, conn)
 
 
