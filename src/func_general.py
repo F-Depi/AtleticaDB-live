@@ -674,7 +674,7 @@ def get_events_link(conn, update_condition, where_clause=''):
             print('\t' + str(ii+1) + '/' + tot, end="\r")
             num_new_rows += link_risultati_sigma_vecchissimo(row, conn)
 
-    print(f"{num_new_rows} where added")
+    print(f"{num_new_rows} link aggiunti")
 
 
 def assegna_evento_generale(nome_evento, gara):
@@ -1396,8 +1396,6 @@ def assegna_evento_specifico(nome, eve):
 
 def assegna_evento_sigma_nuovo(row, conn):
     """
-    Grazie ha dio il sigma nuovo ha la disciplina esatta nella pagina di 
-    risultati
     """
 
     gara = row['gara']
@@ -1406,6 +1404,11 @@ def assegna_evento_sigma_nuovo(row, conn):
 
     # Faremo solo i risultati
     if (match1 is None) and (match2 is None):
+        query = text(f"""UPDATE pagine_gara
+                     SET disciplina = 'iscrizione'
+                     WHERE id = {row['id']}""")
+        conn.execute(query)
+        conn.commit()
         return
 
     url = f"{DOMAIN}{row['anno']}/{row['codice']}/Risultati/{gara}"
@@ -1431,7 +1434,7 @@ def assegna_evento_sigma_nuovo(row, conn):
         return
 
 
-def assegna_evento(conn, update_contidion, where_clause=''):
+def assegna_evento(conn, update_condition, where_clause=''):
     """
     Wrapper che applica le GOATED assegna_evento_generale() e
     assegna_evento_specifico() al database secondo
@@ -1440,13 +1443,21 @@ def assegna_evento(conn, update_contidion, where_clause=''):
     assegna anche lo status di iscrizioni/start list/risultato
     """
 
-    if update_contidion == 'null':
+    if update_condition == 'null':
         where_clause = "WHERE disciplina IS NULL"
-    elif update_contidion == 'custom':
+
+    elif update_condition.startswith('anno_'):
+        anno = int(update_condition.split('_')[1]) # quanti giorni dopo la gara continuo a cercare risultati
+        print(f'Controllo gare del {anno}')
+        where_clause = f"""
+                WHERE disciplina IS NULL
+                AND anno = '{anno}'
+            """
+    elif update_condition == 'custom':
         print("Uso:")
         print(where_clause)
     else:
-        print("Non conosco l'update_condition", update_contidion)
+        print("Non conosco l'update_condition", update_condition)
         return
 
     query = f"SELECT * FROM pagine_gara {where_clause}"
@@ -1477,7 +1488,7 @@ def assegna_evento(conn, update_contidion, where_clause=''):
     conn.commit()
 
     ## Nomi per sigma nuovo
-    df_new = df[df['sigma'] == 'nuovo']
+    df_new = df[df['sigma'] == 'nuovo'].reset_index(drop=True)
     tot = len(df_new)
     print("sigma nuovo", tot)
     for ii, row in df_new.iterrows():
