@@ -16,6 +16,6 @@ from func_scrape import get_iscritti, gare_in_DB
 Cataloghiamo le gara con True/False se i risultati sono stati caricati nel
 database FIDAL e sono quindi nella tabella results oppure no.
 """
-update_condition = 'date_30'
+update_condition = 'date_120'
 with get_db_engine().connect() as conn:
     gare_in_DB(conn, update_condition)

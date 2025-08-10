@@ -402,7 +402,7 @@ def cerca_risultati_gara(row, conn):
     # Per ora ci limitiamo a fare cosi'
     if perc_iscr_in_results > 10:
         query_gare = text(f"""UPDATE gare
-                          SET status = True
+                          SET in_db = True
                           WHERE codice = '{row['codice']}'""")
         conn.execute(query_gare)
 
