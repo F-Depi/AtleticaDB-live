@@ -3,9 +3,9 @@ from func_scrape import get_iscritti, gare_in_DB
 
 
 """ Scarichiamo tutti gli iscritti alle gare """
-#update_condition = 'date_0'
-#with get_db_engine().connect() as conn:
-#    get_iscritti(conn, update_condition)
+update_condition = 'date_7'
+with get_db_engine().connect() as conn:
+    get_iscritti(conn, update_condition)
 
 
 """ Scarichiamo tutti i risultati alle gare """

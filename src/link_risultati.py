@@ -21,7 +21,7 @@ for tipo in ['3', '5', '10']:
 print('\n---------------------------------------------')
 print("Ottengo informazioni su ogni gara")
 
-update_condition = 'date_0' # routine update
+update_condition = 'date_7' # routine update
 with get_db_engine().connect() as conn:
     get_meet_info(conn, update_condition)
 
@@ -38,7 +38,7 @@ print('\n---------------------------------------------')
 print("Ora cerco i link agli eventi di ogni gara")
 
 update_condition = 'date_7'
-update_condition = 'scrape_60'
+#update_condition = 'scrape_60'
 with get_db_engine().connect() as conn:
     get_events_link(conn, update_condition)
 
@@ -69,7 +69,9 @@ arbitraria, ambigua, talvolta addirittura errata...
 Non c'è mai stata una luce in fondo al tunnel
 7324 nomi distinti su 53069
 """
-update_condition = 'null'
+print('\n---------------------------------------------')
+print("Assegno l'evento ai risultati")
+update_condition = 'anno_2025'
 with get_db_engine().connect() as conn:
     assegna_evento(conn, update_condition)
 
