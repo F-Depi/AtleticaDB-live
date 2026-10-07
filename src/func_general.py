@@ -1,5 +1,4 @@
 import re
-import sys
 from datetime import date, datetime
 
 import pandas as pd
@@ -12,6 +11,10 @@ from sqlalchemy.engine import Connection
 from config import DB_CONFIG
 
 DOMAIN = "https://www.fidal.it/risultati/"
+
+# Se a CHECK404 giorni di distanza dalla fine della gara un link da ancora 404
+# lo segno come scraped e basta
+CHECK404 = 14
 
 
 def get_sqlalchemy_connection_string():
@@ -222,15 +225,13 @@ def updates_DB_gara_row(
     qual caso diventano NULL nel db.
     """
 
-    todayis = datetime.now().astimezone().date()
-
     sql = text("""
         UPDATE gare SET
             sigma = :sigma,
             status = :status,
             link_iscritti = :link_iscr,
             link_risultati = :link_ris,
-            aggiornato = :aggiornato
+            aggiornato = CURRENT_TIMESTAMP
         WHERE codice = :codice
     """)
     conn.execute(
@@ -240,11 +241,27 @@ def updates_DB_gara_row(
             "status": status,
             "link_iscr": link_iscritti,
             "link_ris": link_risultati,
-            "aggiornato": todayis,
             "codice": codice,
         },
     )
     conn.commit()
+
+
+def _link_vecchio(first_url: str, base_url: str) -> str | None:
+    """
+    Per il sigma vecchio: se first_url esiste (200) restituisce il link
+    all'ultima tab (o first_url se non ci sono tab), altrimenti None.
+    Può sollevare requests.RequestException.
+    """
+    r = requests.get(first_url, timeout=15)
+    if r.status_code != 200:
+        return None
+
+    soup = BeautifulSoup(r.text, "html.parser")
+    links = soup.find_all("a", class_="navrinmenu")
+    if links:
+        return base_url + str(links[-1]["href"])
+    return first_url
 
 
 def classifica_sigma(
@@ -332,43 +349,23 @@ def classifica_sigma(
         return False
 
     ## Versione del sigma vecchio
-    link_iscritti = f"{base_url}ENTRYLISTBYEVENT1.htm"
+    # Iscritti e risultati sono indipendenti: può esserci uno, l'altro o
+    # entrambi. Solo se non c'è nessuno dei due passiamo al vecchissimo.
     try:
-        r_vecchio_iscr = requests.get(link_iscritti, timeout=15)
+        link_iscritti = _link_vecchio(f"{base_url}ENTRYLISTBYEVENT1.htm", base_url)
+        link_risultati = _link_vecchio(f"{base_url}RESULTSBYEVENT1.htm", base_url)
     except requests.RequestException as exc:
-        print(f"Errore nel collegamento a {link_iscritti}: {exc}")
+        print(f"Errore nel collegamento a {base_url}: {exc}")
         return False
 
-    if r_vecchio_iscr.status_code == 200:
-        status = "iscritti"
-        soup_iscr = BeautifulSoup(r_vecchio_iscr.text, "html.parser")
-
-        # Vediamo quante tab ci sono, tipo 'corse', 'salti', 'lanci' oppure
-        # ogni tanto ce n'è una per categoria.
-        # Ogni tab ha link /ENTRYLISTBYEVENTN, con N = 1, 2, 3, ...
-        links_iscr = soup_iscr.find_all("a", class_="navrinmenu")
-        if links_iscr:
-            link_iscritti = base_url + str(links_iscr[-1]["href"])
-
-        # Controlliamo la stessa cosa per i risultati
-        link_risultati = f"{base_url}RESULTSBYEVENT1.htm"
-        try:
-            r_vecchio_ris = requests.get(link_risultati, timeout=15)
-        except requests.RequestException as exc:
-            print(f"Errore nel collegamento a {link_risultati}: {exc}")
-            return False
-
-        if r_vecchio_ris.status_code == 200:
+    if link_iscritti or link_risultati:
+        if link_risultati:
             status = "risultati"
-            soup_ris = BeautifulSoup(r_vecchio_ris.text, "html.parser")
-            links_ris = soup_ris.find_all("a", class_="navrinmenu")
-            if links_ris:
-                link_risultati = base_url + str(links_ris[-1]["href"])
         else:
-            link_risultati = None
+            status = "iscritti"
 
-        # Nota: con il vecchio mettiam <= perché se ho già i risultati e ritrovo
-        # i risultati è possibile che ci sia una tab in più
+        # Nota: con il vecchio mettiamo <= perché se ho già i risultati e
+        # ritrovo i risultati è possibile che ci sia una tab in più
         if status_value(status) <= current_status or allow_downgrade:
             updates_DB_gara_row(
                 codice, "vecchio", status, link_iscritti, link_risultati, conn
@@ -377,37 +374,20 @@ def classifica_sigma(
 
         return False
 
+    # Versione del sigma vecchissimissima (quella BLU)
+    if "0000FF" in response_index.text and "Verdana" in response_index.text:
+        if status_value(status) <= current_status or allow_downgrade:
+            updates_DB_gara_row(codice, "vecchissimissimo", "dead", None, None, conn)
+            return True
+        return False
+
     ## Se non è pan è polenta. Questo deve essere sigma vecchissimo
 
-    # Qui iscritti e risultati sono sempre alla stessa pagina, per fare
-    # bookeeping correttamente metto comunque il link assumendo che le
-    # iscritti ci debbano essere
+    # Qui iscritti e risultati sono sempre alla stessa pagina. Quindi mettiamo
+    # sempre il link agli iscritti e lo status "iscritti"
     status = "iscritti"
-    link_iscritti = link_index
-    link_risultati = None
-
-    a_elements = soup_index.find_all("a", class_="idx_link")
-    # L'unica differenza costante tra colonna di iscritti e colonna di
-    # risultati sembra essere che quella di iscritti contine href del tipo
-    # GaraLXXX.htm oppure StaffXXX.htm
-    # mentre quella di risultati e' sempre GaraXXX.htm
-    for a in a_elements:
-        href = a.get("href")
-        if not href:
-            continue
-
-        match1 = re.match(r"Gara\d{3}\.htm", str(href))
-        match2 = re.match(r"Diffr.*\.htm", str(href))
-
-        if match1 or match2:
-            status = "risultati"
-            link_risultati = link_index
-            break
-
     if status_value(status) < current_status or allow_downgrade:
-        updates_DB_gara_row(
-            codice, "vecchissimo", status, link_iscritti, link_risultati, conn
-        )
+        updates_DB_gara_row(codice, "vecchissimo", status, link_index, None, conn)
         return True
 
     return False
@@ -440,8 +420,8 @@ def get_meet_info(
 
         where_clause = f"""
             WHERE ABS(DATE '{todayis}' - data_inizio) < {time_span}
-            OR ((aggiornato - data_fine) < {time_span}
-                AND (aggiornato - data_fine >= 0))
+            OR ((aggiornato::date - data_fine) < {time_span}
+                AND (data_fine < DATE '{todayis}'))
             """
 
     elif update_condition == "status":
@@ -451,7 +431,7 @@ def get_meet_info(
         )
         where_clause = """
             WHERE
-                status not in ('dead', 'risultati')
+                status not in ('ghost', 'dead', 'risultati')
                 OR status IS NULL
                 OR (sigma = 'vecchio' and status = 'risultati')
         """
@@ -504,6 +484,34 @@ def get_meet_info(
 ################################################################################
 
 
+def handle_dead_link(
+    status_code: int, codice: str, data_fine: date, tipo: str, conn: Connection
+) -> None:
+    """
+    Se la pagina dà 404 da più di CHECK404 giorni dopo data_fine, segna il link
+    come controllato (tipo = 'iscritti' | 'risultati').
+    """
+    if status_code != 404:
+        return
+
+    morto_da = (datetime.now().astimezone().date() - data_fine).days
+    if morto_da <= CHECK404:
+        return
+
+    if tipo not in ("iscritti", "risultati"):
+        raise ValueError(f"tipo non valido: {tipo}")
+    colonna = f"scraped_link_{tipo}"
+
+    print(
+        f"Sono passati più di {CHECK404} giorni, segno il link_{tipo} come controllato"
+    )
+    conn.execute(
+        text(f"UPDATE gare SET {colonna} = CURRENT_TIMESTAMP WHERE codice = :codice"),
+        {"codice": codice},
+    )
+    conn.commit()
+
+
 def update_DB_pagine_gara(
     link_gara: str, codice: str, data: pd.DataFrame, conn: Connection
 ) -> int:
@@ -530,21 +538,28 @@ def update_DB_pagine_gara(
     ).returning(t.c.link, literal_column("xmax = 0").label("inserted"))
 
     result = conn.execute(stmt).all()
-
-    if data["tipo"].eq("iscritti").any():
+    if data["sigma"][0] == "vecchissimo":
         conn.execute(
             text("""UPDATE gare
                     SET scraped_link_iscritti = CURRENT_TIMESTAMP
                     WHERE codice = :codice"""),
             {"codice": codice},
         )
-    if data["tipo"].eq("risultati").any():
-        conn.execute(
-            text("""UPDATE gare
-                    SET scraped_link_risultati = CURRENT_TIMESTAMP
-                    WHERE codice = :codice"""),
-            {"codice": codice},
-        )
+    else:
+        if data["tipo"].eq("iscritti").any():
+            conn.execute(
+                text("""UPDATE gare
+                        SET scraped_link_iscritti = CURRENT_TIMESTAMP
+                        WHERE codice = :codice"""),
+                {"codice": codice},
+            )
+        if data["tipo"].isin(["risultati", "start lists"]).any():
+            conn.execute(
+                text("""UPDATE gare
+                        SET scraped_link_risultati = CURRENT_TIMESTAMP
+                        WHERE codice = :codice"""),
+                {"codice": codice},
+            )
 
     conn.commit()
 
@@ -582,6 +597,7 @@ def link_sigma_nuovo(row, conn: Connection) -> int:
             print(
                 f"WARNING: {link_iscritti} non risponde, (status_code = {r.status_code})"
             )
+            handle_dead_link(r.status_code, codice, row["data_fine"], "iscritti", conn)
 
         else:
             for el in BeautifulSoup(r.text, "html.parser").find_all(
@@ -620,6 +636,7 @@ def link_sigma_nuovo(row, conn: Connection) -> int:
             print(
                 f"WARNING: {link_risultati} non risponde, (status_code = {r.status_code})"
             )
+            handle_dead_link(r.status_code, codice, row["data_fine"], "risultati", conn)
 
         else:
             for el in BeautifulSoup(r.text, "html.parser").find_all(
@@ -629,7 +646,9 @@ def link_sigma_nuovo(row, conn: Connection) -> int:
                 if not href or href.startswith(("#", "http")):
                     continue
 
-                is_risultati = el.find("img", src=lambda src: src and "checked.png" in src)
+                is_risultati = el.find(
+                    "img", src=lambda src: src and "checked.png" in src
+                )
 
                 records.append(
                     {
@@ -683,33 +702,40 @@ def link_risultati_sigma_vecchio(row, conn):
     urls = []
     link_iscritti = row["link_iscritti"]
     if link_iscritti:
-        N = int(re.search(r'\d+', link_iscritti[-9:]).group())
+        N = int(re.search(r"\d+", link_iscritti[-9:]).group())
         for jj in range(N):
             url = link_iscritti.replace(f"{N}.htm", f"{N - jj}.htm")
             urls.append(["iscritti", url])
 
     link_risultati = row["link_risultati"]
     if link_risultati:
-        N = int(re.search(r'\d+', link_iscritti[-9:]).group())
+        N = int(re.search(r"\d+", link_risultati[-9:]).group())
         for jj in range(N):
             url = link_risultati.replace(f"{N}.htm", f"{N - jj}.htm")
             urls.append(["risultati", url])
 
     data = pd.DataFrame(columns=["tipo", "link", "nome"])
     for tipo, url in urls:
-        r = requests.get(url).text
-        soup = BeautifulSoup(r, "html.parser")
-        elements = soup.find_all("td", id="idx_colonna1")
+        r = requests.get(url)
+        if r.status_code != 200:
+            print(
+                f"WARNING: {link_iscritti} non risponde, (status_code = {r.status_code})"
+            )
+            handle_dead_link(r.status_code, codice, row["data_fine"], tipo, conn)
 
-        for element in elements:
-            a_tag = element.find("a")
-            if a_tag:
-                gara = a_tag["href"][:50]
-                if gara.startswith("http"):
-                    continue
-                nome = a_tag.get_text(strip=True)[:500]
-                base_url = url.rsplit("/", 1)[0]
-                data.loc[len(data)] = [tipo, f"{base_url}/{gara}", nome]
+        else:
+            soup = BeautifulSoup(r.text, "html.parser")
+            elements = soup.find_all("td", id="idx_colonna1")
+
+            for element in elements:
+                a_tag = element.find("a")
+                if a_tag:
+                    gara = a_tag["href"][:50]
+                    if gara.startswith("http"):
+                        continue
+                    nome = a_tag.get_text(strip=True)[:500]
+                    base_url = url.rsplit("/", 1)[0]
+                    data.loc[len(data)] = [tipo, f"{base_url}/{gara}", nome]
 
     if link_iscritti and not data["tipo"].eq("iscritti").any():
         print(f"WARNING: Link iscritti vuoto {link_iscritti}")
@@ -764,57 +790,58 @@ def link_risultati_sigma_vecchissimo(row, conn):
     r = requests.get(link).text
     soup = BeautifulSoup(r, "html.parser")
 
-    tipi_intestazione = {
-        "lista partecipanti": "iscritti",
-        "risultati": "risultati",
-    }
+    righe = []
 
-    data = pd.DataFrame(columns=["tipo", "link", "nome"])
-    tipi_trovati = set()
-
-    # Ogni colonna ha la sua intestazione, che dice di che tipo sono i link
     for n in (1, 2, 3):
-        col_id = f"idx_colonna{n}"
-        th = soup.find("th", id=col_id)
-        if th is None:
+        # La colonna può non esistere: find_all restituisce [] e si passa oltre
+        links = []
+        for element in soup.find_all("td", id=f"idx_colonna{n}"):
+            a_tag = element.find("a")
+            if not a_tag or not a_tag.get("href"):
+                continue
+            href = a_tag["href"]
+            if href.startswith("http"):
+                continue
+            links.append((href[:50], a_tag.get_text(strip=True)[:500]))
+
+        # Il tipo dell'intera colonna si decide dal primo link riconoscibile
+        tipo = None
+        for href, _ in links:
+            nome_file = href.split("?")[0].split("#")[0].rsplit("/", 1)[-1]
+            if re.fullmatch(r"(GaraL|Staff)\d+\.htm", nome_file, re.IGNORECASE):
+                tipo = "iscritti"
+                break
+            if re.fullmatch(r"(Gara\d+|Diffr.*)\.htm", nome_file, re.IGNORECASE):
+                tipo = "risultati"
+                break
+
+        # Tipo non riconosciuto: è come se la colonna non esistesse
+        if tipo is None:
             continue
 
-        intestazione = th.get_text(strip=True)
-        tipo = tipi_intestazione.get(intestazione.lower())
-        if tipo is None:
-            sys.exit(f"Intestazione sconosciuta '{intestazione}' ({col_id}) in {link}")
-        tipi_trovati.add(tipo)
+        for href, nome in links:
+            righe.append((tipo, f"{base_url}/{href}", nome))
 
-        for element in soup.find_all("td", id=col_id):
-            a_tag = element.find("a")
-            if a_tag:
-                gara = a_tag["href"][:50]
-                if gara.startswith("http"):
-                    continue
-                nome = a_tag.get_text(strip=True)[:500]
-                data.loc[len(data)] = [tipo, f"{base_url}/{gara}", nome]
+    if not righe:
+        # Nessuna colonna riconosciuta: lo classifico come vuoto e poi a mano
+        # controllo
 
-    if not tipi_trovati:
-        print(f"WARNING: {link} pagina vuota")
+        print(f"WARNING: {link} vuoto")
+        conn.execute(
+            text("""
+            UPDATE gare SET
+                status = 'vuoto',
+                link_iscritti = NULL,
+                link_risultati = NULL
+            WHERE codice = :cod
+                          """),
+            {"cod": codice},
+        )
+        conn.commit()
+
         return 0
 
-    # Segno come vuoti i tipi che hanno l'intestazione ma nessun link
-    for tipo in tipi_trovati:
-        if not data["tipo"].eq(tipo).any():
-            print(f"WARNING: Link {tipo} vuoto {link}")
-            # tipo vale solo "iscritti" o "risultati", quindi l'f-string è sicura
-            conn.execute(
-                text(f"""UPDATE gare
-                         SET scraped_link_{tipo} = CURRENT_TIMESTAMP, status = '{tipo}?'
-                         WHERE codice = :codice"""),
-                {"codice": codice},
-            )
-            conn.commit()
-
-    if data.empty:
-        print(f"WARNING: {row['link_gara']} pagina vuota")
-        return 0
-
+    data = pd.DataFrame(righe, columns=["tipo", "link", "nome"])
     data["codice"] = codice
     data["data_inizio"] = row["data_inizio"]
     data["sigma"] = row["sigma"]
@@ -836,7 +863,8 @@ def get_events_link(conn: Connection, update_condition: str, where_clause=""):
     Salva anche il nome con cui compare quella disciplina.
 
     conn:             connessione al database
-    update_condition: 'date_N'    per controllare solo le gare svolte da N giorni
+    update_condition: 'date_N'    per controllare solo le gare nell'intorno di N
+                                  giorni o non controllate dopo almeno N giorni
                       'scrape_M'  per controllare le gare di oggi che non sono
                                   state controllate da più di M minuti
                       'all'       per controllare tutto il database (non NULL)
@@ -847,16 +875,25 @@ def get_events_link(conn: Connection, update_condition: str, where_clause=""):
     todayis = datetime.now().astimezone().date()
 
     if update_condition.startswith("date_"):
-        time_span = int(
-            update_condition.split("_")[1]
-        )  # quanti giorni dopo la gara continuo a cercare risultati
-        print(f"Controllo gare finite da al massimo {time_span}giorni")
+        time_span = int(update_condition.split("_")[1])  # giorni
+        print(f"Controllo gare finite da al massimo {time_span} giorni")
         where_clause = f"""
-                WHERE status is in ('iscritti', 'risultati')
-                AND data_fine BETWEEN
-                    DATE '{todayis}' - INTERVAL '{time_span} days'
-                    AND DATE '{todayis}'
-            """
+            WHERE ABS(DATE '{todayis}' - data_inizio) < {time_span}
+               OR (
+                   link_iscritti IS NOT NULL
+                   AND (
+                       scraped_link_iscritti IS NULL
+                       OR scraped_link_iscritti < data_fine + ({time_span} * INTERVAL '1 day')
+                   )
+               )
+               OR (
+                   link_risultati IS NOT NULL
+                   AND (
+                       scraped_link_risultati IS NULL
+                       OR scraped_link_risultati < data_fine + ({time_span} * INTERVAL '1 day')
+                   )
+               )
+        """
 
     elif update_condition.startswith("scrape_"):
         minutes = int(
@@ -910,7 +947,6 @@ def get_events_link(conn: Connection, update_condition: str, where_clause=""):
             print(f"\t{ii + 1}/{tot}", end="\r")
             num_new_rows += link_sigma_nuovo(row, conn)
 
-
     ## Link al sigma VECCHIO
     df_vecchio = df_gare[df_gare["sigma"] == "vecchio"].reset_index(drop=True)
     tot = str(len(df_vecchio))
@@ -923,7 +959,6 @@ def get_events_link(conn: Connection, update_condition: str, where_clause=""):
         for ii, row in df_vecchio.iterrows():
             print(f"\t{ii + 1}/{tot}", end="\r")
             num_new_rows += link_risultati_sigma_vecchio(row, conn)
-
 
     ## Link al sigma VECCHISSIMO
     df_vecchissimo = df_gare[(df_gare["sigma"] == "vecchissimo")].reset_index(drop=True)

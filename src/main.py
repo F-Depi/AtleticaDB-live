@@ -11,33 +11,26 @@ from func_scrape import gare_in_DB, get_iscritti
 
 
 """ 1. Cerca nuove gare nel calendario """
-#print("Scarico l'elenco delle gare dal calendario Fidal (tabella 'gare')")
-#anno = datetime.now().year
-#for tipo in ["3", "5", "10"]:
-#   update_gare_database(str(anno), mese="", regione="", categoria="", tipo=tipo)
+print("Scarico l'elenco delle gare dal calendario Fidal (tabella 'gare')")
+anno = datetime.now().year
+anno = 2022
+for tipo in ["3", "5", "10"]:
+   update_gare_database(str(anno), mese="", regione="", categoria="", tipo=tipo)
 
 
 """ 2. Aggiorna versione sigma e status delle gare """
-#print("-" * 30)
-#print("Ottengo informazioni su ogni gara (aggiorno 'gare')")
-#
-#with get_db_engine().connect() as conn:
-#    get_meet_info(conn, "date_7")
+print("-" * 30)
+print("Ottengo informazioni su ogni gara (aggiorno 'gare')")
+
+with get_db_engine().connect() as conn:
+    get_meet_info(conn, "date_1")
 
 
 """ 3. Trova i link alle singole gare (tabella 'pagine_gara') """
 print("\n---------------------------------------------")
 print("Cerco i link a iscritti/risultati di ogni disciplina (aggiorno 'pagine_gara')")
-
 with get_db_engine().connect() as conn:
-    where_clause = """
-        WHERE sigma = 'vecchissimo'
-        AND status IN ('iscritti', 'risultati')
-        AND scraped_link_iscritti is null
-        AND scraped_link_risultati is null
-        ORDER BY data_inizio DESC
-    """
-    get_events_link(conn, "custom", where_clause)
+    get_events_link(conn, "date_1")
 
 
 sys.exit()
