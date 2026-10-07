@@ -1,6 +1,8 @@
 import sys
 from datetime import datetime
 
+import pandas as pd
+
 from func_general import (
     get_db_engine,
     get_events_link,
@@ -9,28 +11,29 @@ from func_general import (
 )
 from func_scrape import gare_in_DB, get_iscritti
 
+conn = get_db_engine().connect()
 
 """ 1. Cerca nuove gare nel calendario """
 print("Scarico l'elenco delle gare dal calendario Fidal (tabella 'gare')")
 anno = datetime.now().year
-anno = 2022
-for tipo in ["3", "5", "10"]:
-   update_gare_database(str(anno), mese="", regione="", categoria="", tipo=tipo)
+anno_DB = pd.read_sql("""SELECT EXTRACT(YEAR FROM data_fine) AS anno FROM gare
+                         ORDER BY anno DESC 
+                         LIMIT 1""", conn).iloc[0,0].astype(int)
+for a in range(anno_DB, anno + 1):
+    for tipo in ["3", "5", "10"]:
+       update_gare_database(str(a), mese="", regione="", categoria="", tipo=tipo)
 
 
 """ 2. Aggiorna versione sigma e status delle gare """
 print("-" * 30)
 print("Ottengo informazioni su ogni gara (aggiorno 'gare')")
-
-with get_db_engine().connect() as conn:
-    get_meet_info(conn, "date_1")
+get_meet_info(conn, "date_5")
 
 
 """ 3. Trova i link alle singole gare (tabella 'pagine_gara') """
 print("\n---------------------------------------------")
 print("Cerco i link a iscritti/risultati di ogni disciplina (aggiorno 'pagine_gara')")
-with get_db_engine().connect() as conn:
-    get_events_link(conn, "date_1")
+get_events_link(conn, "date_5")
 
 
 sys.exit()

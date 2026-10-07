@@ -307,7 +307,7 @@ def classifica_sigma(
 
     soup_index = BeautifulSoup(response_index.text, "html.parser")
     # Versione del sigma nuova (WISE)
-    if "WISE:" in response_index.text:
+    if "WISE:" in response_index.text or "SigmaNET" in response_index.text:
         # Se la pagina è un link regionale alla gara nazionale fa un redirect,
         # ma prima di farlo apre questa pagina qui
         if 'http-equiv="refresh"' in response_index.text:
@@ -876,18 +876,26 @@ def get_events_link(conn: Connection, update_condition: str, where_clause=""):
 
     if update_condition.startswith("date_"):
         time_span = int(update_condition.split("_")[1])  # giorni
-        print(f"Controllo gare finite da al massimo {time_span} giorni")
+        print(
+            f"Controllo gare nell'intorno di {time_span} giorni da oggi "
+            f"e gare non controllate almeno {time_span} giorni dopo la fine"
+        )
         where_clause = f"""
-            WHERE ABS(DATE '{todayis}' - data_inizio) < {time_span}
+            WHERE (
+                    ABS(DATE '{todayis}' - data_inizio) < {time_span}
+                    AND status IN ('iscritti', 'risultati')
+                    )
+
+               -- For competitions in the past
                OR (
-                   link_iscritti IS NOT NULL
+                   link_iscritti IS NOT NULL AND data_fine < DATE '{todayis}'
                    AND (
                        scraped_link_iscritti IS NULL
                        OR scraped_link_iscritti < data_fine + ({time_span} * INTERVAL '1 day')
                    )
                )
                OR (
-                   link_risultati IS NOT NULL
+                   link_risultati IS NOT NULL AND data_fine < DATE '{todayis}'
                    AND (
                        scraped_link_risultati IS NULL
                        OR scraped_link_risultati < data_fine + ({time_span} * INTERVAL '1 day')
@@ -896,17 +904,23 @@ def get_events_link(conn: Connection, update_condition: str, where_clause=""):
         """
 
     elif update_condition.startswith("scrape_"):
-        minutes = int(
-            update_condition.split("_")[1]
-        )  # quanti minuti fa è stato fatto lo scraping
-        print(f"Controllo gare non controllate da più di {minutes} minuti")
+        # quanti minuti fa è stato fatto lo scraping
+        minutes = int(update_condition.split("_")[1])
+        print(f"Controllo gare di oggi non controllate da più di {minutes} minuti")
 
         where_clause = f"""WHERE
             status IN ('iscritti', 'risultati')
             AND DATE '{todayis}' BETWEEN data_inizio AND data_fine
             AND (
-                scraped_link_risultati IS NULL OR
-                scraped_link_risultati < (CURRENT_TIMESTAMP - INTERVAL '{minutes} minutes')
+                scraped_link_risultati IS NULL
+                OR scraped_link_risultati < (CURRENT_TIMESTAMP - INTERVAL '{minutes} minutes')
+                OR (
+                    sigma = 'vecchissimo'
+                    AND (
+                        scraped_link_iscritti IS NULL
+                        OR scraped_link_iscritti < (CURRENT_TIMESTAMP - INTERVAL '{minutes} minutes')
+                    )
+                )
             )
         """
 
